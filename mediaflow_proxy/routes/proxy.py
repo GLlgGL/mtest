@@ -707,9 +707,13 @@ async def vidoza_fake_hls(
     # original destination mp4
     query_dict["d"] = destination
 
+    # Convert query dict to proper query string
+    query_string = "&".join([f"{key}={quote(str(value))}" for key, value in query_dict.items()])
+
     proxied_mp4_url = str(
-        request.url.replace(path="/proxy/stream", query=QueryParams(query_dict).encode())
+       request.url.replace(path="/proxy/stream", query=query_string)
     )
+
 
     # Simple HLS that just points to that single MP4 as one big segment
     # Many players (including ffmpeg-based) happily accept this.
