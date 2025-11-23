@@ -32,23 +32,24 @@ class VidozaExtractor(BaseExtractor):
             raise ExtractorError("Vidoza: embed page not found")
 
         # Extract direct MP4 URL
-        match = re.search(
-            r'(?:file|src)\s*[:=]\s*["\'](?P<url>https?://[^"\']+\.mp4)["\']',
-            html,
-            re.IGNORECASE
-        )
+        # Extract direct MP4 URL
+match = re.search(
+    r'(?:file|src)\s*[:=]\s*["\'](?P<url>https?://[^"\']+\.mp4)["\']',
+    html,
+    re.IGNORECASE
+)
 
-        if not match:
-            raise ExtractorError("Vidoza: direct MP4 URL not found")
+if not match:
+    raise ExtractorError("Vidoza: direct MP4 URL not found")
 
-        # Only take the first valid URL
-       mp4_url = match.group("url")
+# Only take the first valid URL
+mp4_url = match.group("url")
 
+# Ensure MP4 URL is valid
+parsed_mp4 = urlparse(mp4_url)
+if parsed_mp4.scheme not in ("http", "https"):
+    raise ExtractorError("Vidoza: Invalid MP4 URL scheme")
 
-        # Ensure MP4 URL is valid
-        parsed_mp4 = urlparse(mp4_url)
-        if parsed_mp4.scheme not in ("http", "https"):
-            raise ExtractorError("Vidoza: Invalid MP4 URL scheme")
 
         # Build headers
         headers = self.base_headers.copy()
