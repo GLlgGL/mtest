@@ -9,7 +9,7 @@ class VidozaExtractor(BaseExtractor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Use segment_endpoint since final URL is a direct .mp4
-        self.mediaflow_endpoint = "stream"
+        self.mediaflow_endpoint = "hls_manifest_proxy"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
