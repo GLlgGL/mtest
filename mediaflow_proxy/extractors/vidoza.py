@@ -17,7 +17,7 @@ class VidozaExtractor(BaseExtractor):
             raise ExtractorError("VIDOZA: Invalid domain")
 
         # --- Fetch embed page ---
-        response = await self._make_request(url, allow_redirects=True)
+        response = await self._make_request(url, follow_redirects=True)
         html = response.text
 
         # --- Extract video source ---
