@@ -669,76 +669,54 @@ async def proxy_stream_endpoint(
     return await proxy_stream(request.method, destination, proxy_headers)
 
 
-# ============================================================
-#  VIDOZA: FAKE HLS WRAPPER AROUND DIRECT MP4
-#  (MEDIAFLOW_ENDPOINT = "vidoza_fake_hls")
-# ============================================================
-@proxy_router.get("/vidoza/fake.m3u8", name="vidoza_fake_hls")
+@proxy_router.get("/vidoza/fake.m3u8")
 async def vidoza_fake_hls(
     request: Request,
-    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
-    destination: str = Query(..., alias="d", description="Direct .mp4 URL from Vidoza/Videzz"),
+    destination: str = Query(..., alias="d"),
+    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)]
 ):
     """
-    Build a tiny HLS media playlist that points to the proxied Vidoza MP4.
-
-    This is useful if some players (like Stremio) only accept HLS URLs.
-    The extractor should set mediaflow_endpoint = "vidoza_fake_hls".
+    Create a fake HLS playlist that points to the MP4 through /proxy/stream
+    to bypass Vidoza 509.
     """
-    # Sanitize incoming mp4 URL
+
+    from urllib.parse import quote
+
     destination = sanitize_url(destination)
 
-    # Build a proxied MP4 URL through /stream (same host as this request)
-    # We keep api_password and any h_* headers that came in.
-    base_url = str(request.url.replace(path="/proxy/stream"))
-    # Rebuild query params
-    from fastapi.datastructures import QueryParams
+    # Build required query params for stream
+    query_dict = {
+        "d": destination,
+        "api_password": request.query_params.get("api_password", "")
+    }
 
-    query_dict = {}
-    # api_password
-    if "api_password" in request.query_params:
-        query_dict["api_password"] = request.query_params["api_password"]
+    # Add all header propagations (h_*)
+    for k, v in request.query_params.items():
+        if k.startswith("h_"):
+            query_dict[k] = v
 
-    # copy headers passed as h_*
-    for key, value in request.query_params.items():
-        if key.startswith("h_"):
-            query_dict[key] = value
+    # Build query string manually (NO double encoding)
+    query_string = "&".join([
+        f"{key}={quote(str(value))}" for key, value in query_dict.items()
+    ])
 
-    # original destination mp4
-    query_dict["d"] = destination
+    # Build clean absolute URL (no recursion, no replace())
+    proxy_base = f"{request.url.scheme}://{request.url.netloc}"
+    proxied_mp4_url = f"{proxy_base}/proxy/stream?{query_string}"
 
-    # Convert query dict to proper query string
-    query_string = "&".join([f"{key}={quote(str(value))}" for key, value in query_dict.items()])
-
-    proxied_mp4_url = str(
-       request.url.replace(path="/proxy/stream", query=query_string)
-    )
-
-
-    # Simple HLS that just points to that single MP4 as one big segment
-    # Many players (including ffmpeg-based) happily accept this.
-    hls_playlist = "\n".join(
-        [
-            "#EXTM3U",
-            "#EXT-X-VERSION:3",
-            "#EXT-X-TARGETDURATION:7200",
-            "#EXT-X-MEDIA-SEQUENCE:0",
-            "#EXT-X-PLAYLIST-TYPE:VOD",
-            "#EXTINF:7200.0,",
-            proxied_mp4_url,
-            "#EXT-X-ENDLIST",
-            "",
-        ]
-    )
+    # Fake playlist with single 2-hour segment
+    playlist = f"""#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:7200
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:7200.0,
+{proxied_mp4_url}
+#EXT-X-ENDLIST
+"""
 
     return Response(
-        content=hls_playlist,
-        media_type="application/vnd.apple.mpegurl",
-        headers={
-            "Content-Type": "application/vnd.apple.mpegurl",
-            "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*",
-        },
+        content=playlist,
+        media_type="application/vnd.apple.mpegurl"
     )
 
 
