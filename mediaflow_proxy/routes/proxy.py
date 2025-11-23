@@ -641,6 +641,21 @@ async def proxy_stream_endpoint(
             content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
 
         proxy_headers.response.update({"content-disposition": content_disposition})
+    # ----------------------------
+# VIDOZA ANTI-509 PROTECTION
+# ----------------------------
+        if destination.endswith(".mp4") and (
+        "vidoza" in destination or "videzz" in destination
+         ):
+    # Remove Stremio aggressive range requests
+    proxy_headers.request.pop("range", None)
+    proxy_headers.request["Range"] = "bytes=0-"
+
+    # Prevent Stremio from sending further range requests
+    proxy_headers.response["Accept-Ranges"] = "none"
+
+    # Prevent constant refetching = avoids 509
+    proxy_headers.response["Cache-Control"] = "no-store"
 
     return await proxy_stream(request.method, destination, proxy_headers)
 
