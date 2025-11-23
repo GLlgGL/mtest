@@ -1,55 +1,55 @@
 import re
-from typing import Dict, Any
 from urllib.parse import urlparse
-
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 class VidozaExtractor(BaseExtractor):
     """
-    Vidoza extractor: returns direct MP4 URL.
-    Always uses direct streaming since Vidoza serves .mp4 files.
+    Extractor for Vidoza URLs. Handles both direct MP4 and DASH/MPD streams.
     """
 
-    async def extract(self, url: str) -> Dict[str, Any]:
-        parsed = urlparse(url)
+    async def extract(self, url: str) -> dict:
+        """
+        Extract the playable stream URL from a Vidoza embed page.
 
-        # Acceptable domains
-        valid_domains = ("vidoza.net", "vidoza.co", "videzz.net")
-        hostname = parsed.hostname.lower() if parsed.hostname else ""
-        if not hostname or not (hostname in valid_domains or any(hostname.endswith(f".{d}") for d in valid_domains)):
-            raise ExtractorError("Vidoza: Invalid domain")
+        Args:
+            url (str): The embed URL.
 
-        # Fetch the embed page
-        response = await self._make_request(url)
-        html = response.text
+        Returns:
+            dict: {
+                "destination_url": str,  # final playable URL
+                "mediaflow_endpoint": str | None,  # "mpd_segment" for DASH, None for direct MP4
+                "request_headers": dict  # optional headers for the request
+            }
+        """
+        try:
+            # Fetch the embed page
+            async with self.httpx_client as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                html = resp.text
 
-        if not html or "Video not found" in html:
-            raise ExtractorError("Vidoza: embed page not found")
+            # Attempt to find a direct MP4 URL
+            mp4_match = re.search(r'(https?://[^\'" >]+\.mp4)', html)
+            if mp4_match:
+                direct_url = mp4_match.group(1)
+                return {
+                    "destination_url": direct_url,
+                    "mediaflow_endpoint": None,  # direct MP4 → no segment proxy needed
+                    "request_headers": {}
+                }
 
-        # Extract direct MP4 URL
-        match = re.search(
-            r'(?:file|src)\s*[:=]\s*["\'](?P<url>https?://[^"\']+\.mp4)["\']',
-            html,
-            re.IGNORECASE
-        )
+            # Attempt to find a DASH/MPD manifest URL
+            mpd_match = re.search(r'(https?://[^\'" >]+\.mpd)', html)
+            if mpd_match:
+                mpd_url = mpd_match.group(1)
+                return {
+                    "destination_url": mpd_url,
+                    "mediaflow_endpoint": "mpd_segment",  # proxy segments through mpd route
+                    "request_headers": {}
+                }
 
-        if not match:
-            raise ExtractorError("Vidoza: direct MP4 URL not found")
+            # If nothing found, raise error
+            raise ExtractorError("No playable video URL found on Vidoza page.")
 
-        mp4_url = match.group("url")
-
-        # Validate MP4 URL scheme
-        parsed_mp4 = urlparse(mp4_url)
-        if parsed_mp4.scheme not in ("http", "https"):
-            raise ExtractorError("Vidoza: Invalid MP4 URL scheme")
-
-        # Build headers
-        headers = self.base_headers.copy()
-        headers["referer"] = url
-
-        # Return the direct MP4 URL without requiring a named route
-        return {
-            "destination_url": mp4_url,  # direct .mp4 URL
-            "request_headers": headers,
-            "mediaflow_endpoint": None,  # disables url_for
-        }
+        except Exception as e:
+            raise ExtractorError(f"Vidoza extraction failed: {e}")
