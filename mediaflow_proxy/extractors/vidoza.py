@@ -7,56 +7,48 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 class VidozaExtractor(BaseExtractor):
     """
-    Vidoza extractor (MP4).
-    Always uses video_proxy since Vidoza serves direct .mp4 files.
+    Minimal Vidoza extractor for direct .mp4 files.
+    Always uses the `/stream` endpoint in MediaFlow Proxy.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.mediaflow_endpoint = "video_proxy"
+        self.mediaflow_endpoint = "stream"  # points to /stream route
 
     async def extract(self, url: str) -> Dict[str, Any]:
         parsed = urlparse(url)
-
-        # Accept vidoza.net / vidoza.co / videzz.net
         valid_domains = ("vidoza.net", "vidoza.co", "videzz.net")
         hostname = parsed.hostname.lower() if parsed.hostname else ""
+
         if not hostname or not (hostname in valid_domains or any(hostname.endswith(f".{d}") for d in valid_domains)):
             raise ExtractorError("Vidoza: Invalid domain")
 
-        # Fetch embed page
+        # Fetch the page
         response = await self._make_request(url)
         html = response.text
 
         if not html or "Video not found" in html:
-            raise ExtractorError("Vidoza: embed page not found")
+            raise ExtractorError("Vidoza: Video not found")
 
-        # Extract all MP4 URLs
-        matches = list(re.finditer(
+        # Extract the direct .mp4 URL
+        match = re.search(
             r'(?:file|src)\s*[:=]\s*["\'](?P<url>https?://[^"\']+\.mp4)["\']',
             html,
             re.IGNORECASE
-        ))
+        )
+        if not match:
+            raise ExtractorError("Vidoza: Direct .mp4 URL not found")
 
-        if not matches:
-            raise ExtractorError("Vidoza: direct MP4 URL not found")
+        mp4_url = match.group("url")
 
-        # Filter URLs by valid scheme
-        valid_urls = [m.group("url") for m in matches if urlparse(m.group("url")).scheme in ("http", "https")]
-
-        if not valid_urls:
-            raise ExtractorError("Vidoza: No valid MP4 URLs found")
-
-        # Use the first valid URL for MediaFlow Proxy
-        mp4_url = valid_urls[0]
-
-        # Build headers
-        headers = self.base_headers.copy()
-        headers["referer"] = url
+        # Validate URL
+        parsed_mp4 = urlparse(mp4_url)
+        if parsed_mp4.scheme not in ("http", "https"):
+            raise ExtractorError("Vidoza: Invalid .mp4 URL scheme")
 
         # Return structure for MediaFlow Proxy
         return {
             "destination_url": mp4_url,
-            "request_headers": headers,
-            "mediaflow_endpoint": self.mediaflow_endpoint,
+            "request_headers": {"referer": url},  # Vidoza usually requires referer
+            "mediaflow_endpoint": self.mediaflow_endpoint,  # use /stream
         }
