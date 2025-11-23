@@ -592,10 +592,10 @@ async def dash_segment_proxy(
     return await handle_stream_request("GET", segment_url, proxy_headers)
 
 
-@proxy_router.head("/stream")
-@proxy_router.get("/stream")
-@proxy_router.head("/stream/{filename:path}")
-@proxy_router.get("/stream/{filename:path}")
+@proxy_router.head("/stream", name="stream")
+@proxy_router.get("/stream", name="stream")
+@proxy_router.head("/stream/{filename:path}", name="stream")
+@proxy_router.get("/stream/{filename:path}", name="stream")
 async def proxy_stream_endpoint(
     request: Request,
     proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
