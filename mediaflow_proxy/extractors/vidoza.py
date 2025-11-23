@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
@@ -8,37 +8,35 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 class VidozaExtractor(BaseExtractor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # We'll use the HLS proxy endpoint to bypass IP locks
-        self.mediaflow_endpoint = "hls_manifest_proxy"
+        # Use segment_endpoint since final URL is a direct .mp4
+        self.mediaflow_endpoint = "segment_endpoint"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
-        if not parsed.hostname or not any(h in parsed.hostname for h in ("vidoza", "videzz.net")):
+        # Accept videzz.net domain (redirect from vidoza.net)
+        if not parsed.hostname or not parsed.hostname.endswith("videzz.net"):
             raise ExtractorError("VIDOZA: Invalid domain")
 
-        # --- Fetch embed page ---
-        response = await self._make_request(url, follow_redirects=True)
+        # Fetch the embed page
+        response = await self._make_request(
+            url,
+            headers={"referer": "https://vidoza.net/"}  # required for IP-locked .mp4
+        )
         html = response.text
 
-        # --- Extract video source ---
-        # Videzz uses a JS variable "sources" or "file" containing the .mp4 or HLS URL
-        match = re.search(r'sources\s*:\s*\[\{file\s*:\s*"([^"]+)"', html)
-        if not match:
-            match = re.search(r'file\s*:\s*"([^"]+)"', html)
-
+        # Extract the .mp4 URL
+        match = re.search(r'https://[^"]+\.mp4', html)
         if not match:
             raise ExtractorError("VIDOZA: Unable to find video URL in embed page")
 
-        video_url = match.group(1)
-        if not video_url.startswith("http"):
-            video_url = urljoin(url, video_url)
+        mp4_url = match.group(0)
 
-        # --- Return structure for MediaFlow Proxy ---
+        # Prepare headers for proxy request
         headers = self.base_headers.copy()
-        headers["referer"] = url
+        headers["referer"] = "https://vidoza.net/"
 
         return {
-            "destination_url": video_url,
+            "destination_url": mp4_url,
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
         }
