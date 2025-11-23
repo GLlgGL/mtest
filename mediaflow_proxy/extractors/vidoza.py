@@ -41,7 +41,9 @@ class VidozaExtractor(BaseExtractor):
         if not match:
             raise ExtractorError("Vidoza: direct MP4 URL not found")
 
-        mp4_url = match.group("url")
+        # Only take the first valid URL
+        mp4_url = matches[0].group("url")
+
 
         # Ensure MP4 URL is valid
         parsed_mp4 = urlparse(mp4_url)
