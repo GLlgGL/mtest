@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse
+import httpx
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 class VidozaExtractor(BaseExtractor):
@@ -16,14 +16,14 @@ class VidozaExtractor(BaseExtractor):
 
         Returns:
             dict: {
-                "destination_url": str,  # final playable URL
-                "mediaflow_endpoint": str | None,  # "mpd_segment" for DASH, None for direct MP4
-                "request_headers": dict  # optional headers for the request
+                "destination_url": str,
+                "mediaflow_endpoint": str | None,
+                "request_headers": dict
             }
         """
         try:
-            # Fetch the embed page
-            async with self.httpx_client as client:
+            # Use a local httpx AsyncClient
+            async with httpx.AsyncClient(follow_redirects=True) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 html = resp.text
@@ -34,7 +34,7 @@ class VidozaExtractor(BaseExtractor):
                 direct_url = mp4_match.group(1)
                 return {
                     "destination_url": direct_url,
-                    "mediaflow_endpoint": None,  # direct MP4 → no segment proxy needed
+                    "mediaflow_endpoint": None,  # direct MP4 → no segment proxy
                     "request_headers": {}
                 }
 
@@ -44,7 +44,7 @@ class VidozaExtractor(BaseExtractor):
                 mpd_url = mpd_match.group(1)
                 return {
                     "destination_url": mpd_url,
-                    "mediaflow_endpoint": "mpd_segment",  # proxy segments through mpd route
+                    "mediaflow_endpoint": "mpd_segment",  # route segments through proxy
                     "request_headers": {}
                 }
 
