@@ -592,10 +592,10 @@ async def dash_segment_proxy(
     return await handle_stream_request("GET", segment_url, proxy_headers)
 
 
-@proxy_router.head("/stream", name="stream")
-@proxy_router.get("/stream", name="stream")
-@proxy_router.head("/stream/{filename:path}", name="stream")
-@proxy_router.get("/stream/{filename:path}", name="stream")
+@proxy_router.head("/stream")
+@proxy_router.get("/stream")
+@proxy_router.head("/stream/{filename:path}")
+@proxy_router.get("/stream/{filename:path}")
 async def proxy_stream_endpoint(
     request: Request,
     proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
@@ -604,51 +604,44 @@ async def proxy_stream_endpoint(
 ):
     """
     Proxify stream requests to the given video URL.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
+        destination (str): The URL of the stream to be proxied.
+        filename (str | None): The filename to be used in the response headers.
+
+    Returns:
+        Response: The HTTP response with the streamed content.
     """
     # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-
+    
     # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
     if dlhd_result:
+        # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-
-    # Validate range header
+    
     content_range = proxy_headers.request.get("range", "bytes=0-")
     if "nan" in content_range.casefold():
+        # Handle invalid range requests "bytes=NaN-NaN"
         raise HTTPException(status_code=416, detail="Invalid Range Header")
-
     proxy_headers.request.update({"range": content_range})
-
-    # Handle filename for download
     if filename:
+        # If a filename is provided, set it in the headers using RFC 6266 format
         try:
+            # Try to encode with latin-1 first (simple case)
             filename.encode("latin-1")
             content_disposition = f'attachment; filename="{filename}"'
         except UnicodeEncodeError:
+            # For filenames with non-latin-1 characters, use RFC 6266 format with UTF-8
             encoded_filename = quote(filename.encode("utf-8"))
             content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
 
         proxy_headers.response.update({"content-disposition": content_disposition})
 
-    # -------------------------------------------------
-    # VIDOZA ANTI-509 PROTECTION (Critical for Stremio)
-    # -------------------------------------------------
-    if destination.endswith(".mp4") and (
-        "vidoza" in destination or "videzz" in destination
-    ):
-        # REMOVE range, add clean range (prevents 509)
-        proxy_headers.request.pop("range", None)
-        proxy_headers.request["Range"] = "bytes=0-"
-
-        # Stop Stremio sending its own range probes
-        proxy_headers.response["Accept-Ranges"] = "none"
-
-        # Avoid cache loops (prevents repeat 509)
-        proxy_headers.response["Cache-Control"] = "no-store"
-
-    # Return proxied stream
     return await proxy_stream(request.method, destination, proxy_headers)
 
 
