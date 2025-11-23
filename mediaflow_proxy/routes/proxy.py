@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated
 from urllib.parse import quote, unquote
 import re
@@ -458,7 +459,13 @@ async def _handle_hls_with_dlhd_retry(
         new_manifest = "\n".join(new_manifest_lines)
 
         # Process the new manifest to proxy all URLs within it
-        processor = M3U8Processor(request, hls_params.key_url, hls_params.force_playlist_proxy, hls_params.key_only_proxy, hls_params.no_proxy)
+        processor = M3U8Processor(
+            request,
+            hls_params.key_url,
+            hls_params.force_playlist_proxy,
+            hls_params.key_only_proxy,
+            hls_params.no_proxy,
+        )
         processed_manifest = await processor.process_m3u8(new_manifest, base_url=hls_params.destination)
         
         return Response(content=processed_manifest, media_type="application/vnd.apple.mpegurl")
@@ -592,6 +599,9 @@ async def dash_segment_proxy(
     return await handle_stream_request("GET", segment_url, proxy_headers)
 
 
+# ============================================================
+#  VIDOZA: DIRECT MP4 STREAM ENDPOINT WITH 509 PROTECTION
+# ============================================================
 @proxy_router.head("/stream", name="stream")
 @proxy_router.get("/stream", name="stream")
 @proxy_router.head("/stream/{filename:path}", name="stream")
@@ -609,35 +619,42 @@ async def proxy_stream_endpoint(
     # Fix malformed / encoded URL
     destination = sanitize_url(destination)
 
+    # First: check DLHD shortcuts (unchanged behavior)
+    dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
+    if dlhd_result:
+        destination = dlhd_result["destination_url"]
+        proxy_headers.request.update(dlhd_result.get("request_headers", {}))
+
     # ----------------------------
     # VIDOZA ANTI-509 PROTECTION
     # ----------------------------
     if destination.endswith(".mp4") and ("vidoza" in destination or "videzz" in destination):
-        # 1. Vidoza rejects HEAD - convert HEAD to GET
+        # 1. Vidoza often rejects HEAD - convert HEAD to GET server-side
         if request.method == "HEAD":
+            # Starlette/FastAPI internal hack – safe here for this specific case
             request._method = "GET"
 
-        # 2. Remove any range header Stremio adds (causes 509)
+        # 2. Remove any range header Stremio adds (these usually trigger 509)
         proxy_headers.request.pop("range", None)
         proxy_headers.request["Range"] = "bytes=0-"
 
         # 3. Do NOT allow the client to request ranges again
         proxy_headers.response["Accept-Ranges"] = "none"
 
-        # 4. Vidoza sometimes blocks caching headers
+        # 4. Avoid weird caching with some clients / CDNs
         proxy_headers.response["Cache-Control"] = "no-store"
 
         # 5. Required referrer header
         proxy_headers.request["referer"] = "https://vidoza.net/"
 
-    # Fetch normally for everything else (HLS, DLHD, etc.)
+    # Normal range sanity check
     content_range = proxy_headers.request.get("range", "bytes=0-")
     if "nan" in content_range.casefold():
         raise HTTPException(status_code=416, detail="Invalid Range Header")
 
     proxy_headers.request.update({"range": content_range})
 
-    # Handle filename if provided
+    # Handle filename if provided (download)
     if filename:
         try:
             filename.encode("latin-1")
@@ -651,6 +668,74 @@ async def proxy_stream_endpoint(
     # Stream the file
     return await proxy_stream(request.method, destination, proxy_headers)
 
+
+# ============================================================
+#  VIDOZA: FAKE HLS WRAPPER AROUND DIRECT MP4
+#  (MEDIAFLOW_ENDPOINT = "vidoza_fake_hls")
+# ============================================================
+@proxy_router.get("/vidoza/fake.m3u8", name="vidoza_fake_hls")
+async def vidoza_fake_hls(
+    request: Request,
+    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
+    destination: str = Query(..., alias="d", description="Direct .mp4 URL from Vidoza/Videzz"),
+):
+    """
+    Build a tiny HLS media playlist that points to the proxied Vidoza MP4.
+
+    This is useful if some players (like Stremio) only accept HLS URLs.
+    The extractor should set mediaflow_endpoint = "vidoza_fake_hls".
+    """
+    # Sanitize incoming mp4 URL
+    destination = sanitize_url(destination)
+
+    # Build a proxied MP4 URL through /stream (same host as this request)
+    # We keep api_password and any h_* headers that came in.
+    base_url = str(request.url.replace(path="/proxy/stream"))
+    # Rebuild query params
+    from fastapi.datastructures import QueryParams
+
+    query_dict = {}
+    # api_password
+    if "api_password" in request.query_params:
+        query_dict["api_password"] = request.query_params["api_password"]
+
+    # copy headers passed as h_*
+    for key, value in request.query_params.items():
+        if key.startswith("h_"):
+            query_dict[key] = value
+
+    # original destination mp4
+    query_dict["d"] = destination
+
+    proxied_mp4_url = str(
+        request.url.replace(path="/proxy/stream", query=QueryParams(query_dict).encode())
+    )
+
+    # Simple HLS that just points to that single MP4 as one big segment
+    # Many players (including ffmpeg-based) happily accept this.
+    hls_playlist = "\n".join(
+        [
+            "#EXTM3U",
+            "#EXT-X-VERSION:3",
+            "#EXT-X-TARGETDURATION:7200",
+            "#EXT-X-MEDIA-SEQUENCE:0",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+            "#EXTINF:7200.0,",
+            proxied_mp4_url,
+            "#EXT-X-ENDLIST",
+            "",
+        ]
+    )
+
+    return Response(
+        content=hls_playlist,
+        media_type="application/vnd.apple.mpegurl",
+        headers={
+            "Content-Type": "application/vnd.apple.mpegurl",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 @proxy_router.get("/mpd/manifest.m3u8")
