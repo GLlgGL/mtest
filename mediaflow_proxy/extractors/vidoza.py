@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
@@ -8,36 +8,37 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 class VidozaExtractor(BaseExtractor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Segment endpoint for IP-locked .mp4
-        self.mediaflow_endpoint = "segment_endpoint"
+        # We'll use the HLS proxy endpoint to bypass IP locks
+        self.mediaflow_endpoint = "hls_manifest_proxy"
 
-    async def extract(self, url: str) -> Dict[str, Any]:
+    async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
-        if not parsed.hostname or "vidoza" not in parsed.hostname:
+        if not parsed.hostname or not any(h in parsed.hostname for h in ("vidoza", "videzz.net")):
             raise ExtractorError("VIDOZA: Invalid domain")
 
-        # Fetch embed page
-        response = await self._make_request(url)
+        # --- Fetch embed page ---
+        response = await self._make_request(url, allow_redirects=True)
         html = response.text
 
-        # Extract final .mp4 URL
-        mp4_match = re.search(r'sources\s*:\s*\[\{file:"([^"]+\.mp4)"', html)
-        if not mp4_match:
-            raise ExtractorError("VIDOZA: No playable .mp4 URL found")
+        # --- Extract video source ---
+        # Videzz uses a JS variable "sources" or "file" containing the .mp4 or HLS URL
+        match = re.search(r'sources\s*:\s*\[\{file\s*:\s*"([^"]+)"', html)
+        if not match:
+            match = re.search(r'file\s*:\s*"([^"]+)"', html)
 
-        mp4_url = mp4_match.group(1)
+        if not match:
+            raise ExtractorError("VIDOZA: Unable to find video URL in embed page")
 
-        parsed_mp4 = urlparse(mp4_url)
-        if not parsed_mp4.scheme or parsed_mp4.scheme not in ("http", "https"):
-            raise ExtractorError("VIDOZA: Invalid .mp4 URL scheme")
+        video_url = match.group(1)
+        if not video_url.startswith("http"):
+            video_url = urljoin(url, video_url)
 
-        # Add referer headers for the proxied request
+        # --- Return structure for MediaFlow Proxy ---
         headers = self.base_headers.copy()
         headers["referer"] = url
 
-        # Return info pointing to MediaFlow segment proxy
         return {
-            "destination_url": mp4_url,
+            "destination_url": video_url,
             "request_headers": headers,
-            "mediaflow_endpoint": self.mediaflow_endpoint,  # /mpd/segment.mp4
+            "mediaflow_endpoint": self.mediaflow_endpoint,
         }
