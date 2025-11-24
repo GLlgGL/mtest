@@ -609,29 +609,32 @@ async def proxy_stream_endpoint(
     # ---------------------------------------------------------
     # VIDOZA / MP4 ANTI-MULTI-REQUEST FIX (STREMIO COMPATIBLE)
     # ---------------------------------------------------------
-    if destination.endswith(".mp4"):
-        logger = logging.getLogger(__name__)
-        logger.warning("Applying MP4 anti-multi-request mode")
+        # ---------------------------------------------------------
+    # MP4 ANTI-MULTIPLE-REQUEST FIX (Stremio / WebPlayers)
+    # ---------------------------------------------------------
+    if destination.lower().endswith(".mp4"):
+        logger = logging.getLogger("mp4fix")
+        logger.warning(f"[MP4 FIX] Activated for {destination}")
 
-        # 1) BLOCK STREMIO HEAD REQUESTS
+        # 1) Stop Stremio’s HEAD spam
         if request.method == "HEAD":
-            return Response(status_code=200, headers={
-                "Content-Length": "999999999",
-                "Accept-Ranges": "bytes"
-            })
+            return Response(
+                status_code=200,
+                headers={
+                    "Content-Length": "999999999",  # Fakes full length
+                    "Accept-Ranges": "bytes"
+                }
+            )
 
-        # 2) FORCE EXACTLY ONE RANGE REQUEST
+        # 2) Enforce single-range GET request
         proxy_headers.request.pop("range", None)
         proxy_headers.request["Range"] = "bytes=0-"
 
-        # 3) TELL STREMIO TO STOP SENDING MULTIPLE RANGES
+        # 3) Stop Stremio from sending range probes
         proxy_headers.response["Accept-Ranges"] = "none"
 
-        # 4) PREVENT ANY RE-CALLS
+        # 4) Prevent HEAD re-check
         proxy_headers.response["Cache-Control"] = "no-store"
-
-        # 5) Override internal range header to stop retries
-        request._headers["range"] = "bytes=0-"
 
     # DLHD extract
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
