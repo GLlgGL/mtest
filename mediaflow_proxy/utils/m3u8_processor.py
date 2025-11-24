@@ -160,16 +160,6 @@ class M3U8Processor:
         Returns:
             str: The processed line.
         """
-
-
-        AD_HOSTS = [
-            "tiktokcdn.com",
-            "ad-site",
-            "doubleclick",
-            "adservice",
-        ]
-        if any(ad in line for ad in AD_HOSTS):
-            return ""
         if "URI=" in line:
             return await self.process_key_line(line, base_url)
         elif not line.startswith("#") and line.strip():
