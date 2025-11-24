@@ -149,7 +149,7 @@ class M3U8Processor:
             processed_line = await self.process_line(buffer, base_url)
             yield processed_line
 
-       async def process_line(self, line: str, base_url: str) -> str:
+     async def process_line(self, line: str, base_url: str) -> str:
         """
         Process a single line from the m3u8 content.
         """
@@ -176,6 +176,7 @@ class M3U8Processor:
             return await self.proxy_content_url(line, base_url)
         else:
             return line
+
 
     async def process_key_line(self, line: str, base_url: str) -> str:
         """
