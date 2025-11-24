@@ -6,21 +6,16 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class VidozaExtractor(BaseExtractor):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Use segment_endpoint since final URL is a direct .mp4
-        self.mediaflow_endpoint = "vidoza_fake_hls"
-
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         parsed = urlparse(url)
-        # Accept videzz.net domain (redirect from vidoza.net)
+
         if not parsed.hostname or not parsed.hostname.endswith("videzz.net"):
             raise ExtractorError("VIDOZA: Invalid domain")
 
-        # Fetch the embed page
+        # Fetch the embed page with Vidoza referer
         response = await self._make_request(
             url,
-            headers={"referer": "https://vidoza.net/"}  # required for IP-locked .mp4
+            headers={"referer": "https://vidoza.net/"}
         )
         html = response.text
 
@@ -31,12 +26,14 @@ class VidozaExtractor(BaseExtractor):
 
         mp4_url = match.group(0)
 
-        # Prepare headers for proxy request
+        # Prepare headers
         headers = self.base_headers.copy()
         headers["referer"] = "https://vidoza.net/"
 
+        # IMPORTANT:
+        # no mediaflow_endpoint override here → behaves like DoodStream
         return {
             "destination_url": mp4_url,
             "request_headers": headers,
-            "mediaflow_endpoint": self.mediaflow_endpoint,
+            # BaseExtractor already sets mediaflow_endpoint="stream"
         }
