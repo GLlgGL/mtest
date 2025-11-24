@@ -150,22 +150,33 @@ class M3U8Processor:
             yield processed_line
 
     async def process_line(self, line: str, base_url: str) -> str:
-        """
-        Process a single line from the m3u8 content.
+    """
+    Process a single line from the m3u8 content.
+    """
 
-        Args:
-            line (str): The line to process.
-            base_url (str): The base URL to resolve relative URLs.
+    # -------------------------------------------------------------
+    # 🔥 STREAMWISH / TIKTOK AD FILTER
+    # -------------------------------------------------------------
+    AD_HOSTS = [
+        "tiktokcdn.com",
+        "ad-site",
+        "doubleclick",
+        "adservice",
+    ]
 
-        Returns:
-            str: The processed line.
-        """
-        if "URI=" in line:
-            return await self.process_key_line(line, base_url)
-        elif not line.startswith("#") and line.strip():
-            return await self.proxy_content_url(line, base_url)
-        else:
-            return line
+    # Skip ad/tracking/broken segments
+    if any(ad in line for ad in AD_HOSTS):
+        return ""  # remove ad line entirely
+
+    # -------------------------------------------------------------
+
+    if "URI=" in line:
+        return await self.process_key_line(line, base_url)
+    elif not line.startswith("#") and line.strip():
+        return await self.proxy_content_url(line, base_url)
+    else:
+        return line
+
 
     async def process_key_line(self, line: str, base_url: str) -> str:
         """
