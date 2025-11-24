@@ -592,6 +592,7 @@ async def dash_segment_proxy(
     # Fallback to direct streaming if not in cache
     return await handle_stream_request("GET", segment_url, proxy_headers)
 
+
 @proxy_router.head("/stream")
 @proxy_router.get("/stream")
 @proxy_router.head("/stream/{filename:path}")
@@ -603,104 +604,82 @@ async def proxy_stream_endpoint(
     filename: str | None = None,
 ):
     """
-    Proxify MP4 and other stream requests with full Stremio compatibility,
-    including Vidoza anti-509 logic and correct HEAD metadata.
+    Proxify stream requests to the given video URL.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
+        destination (str): The URL of the stream to be proxied.
+        filename (str | None): The filename to be used in the response headers.
+
+    Returns:
+        Response: The HTTP response with the streamed content.
     """
-
-    # Fix malformed URLs
+    # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-
-    # ------------------------------
-    # 1) DLHD AUTO-EXTRACTION
-    # ------------------------------
+    
+    # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
     if dlhd_result:
+        # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-
-    # -----------------------------------------------------
-    # Detect VIDOZA MP4 (the ones that cause 509 normally)
-    # -----------------------------------------------------
-    is_vidoza_mp4 = (
-        destination.endswith(".mp4") and
-        ("vidoza" in destination or "videzz" in destination)
-    )
-
-    # --------------------------------------------------------------
-    # 2) FULL CORRECT HEAD RESPONSE (Stremio NEEDS metadata to hash)
-    # --------------------------------------------------------------
-    if request.method == "HEAD" and is_vidoza_mp4:
-        async with create_httpx_client(
-            headers={"referer": "https://vidoza.net/"},
-            follow_redirects=True
-        ) as client:
-            try:
-                # Vidoza blocks true HEAD → request only 1 byte
-                head_resp = await client.get(destination, headers={"Range": "bytes=0-0"})
-
-                # Build headers Stremio expects
-                stremio_head = {
-                    "Accept-Ranges": "bytes",
-                    "Content-Type": head_resp.headers.get("Content-Type", "video/mp4"),
-                    "Content-Length": head_resp.headers.get("Content-Length", "0"),
-                    "Cache-Control": "no-store",
-                }
-                return Response(status_code=200, headers=stremio_head)
-
-            except Exception:
-                # Fallback minimal metadata
-                return Response(
-                    status_code=200,
-                    headers={
-                        "Accept-Ranges": "bytes",
-                        "Content-Type": "video/mp4",
-                        "Content-Length": "0"
-                    }
-                )
-
-    # -----------------------------------------------------
-    # 3) VIDOZA GET STREAM FIX (anti-509 protection)
-    # -----------------------------------------------------
-    if is_vidoza_mp4:
-        # Vidoza REQUIRES referer
-        proxy_headers.request["referer"] = "https://vidoza.net/"
-
-        # Remove Stremio's broken range headers
-        proxy_headers.request.pop("range", None)
-        proxy_headers.request["Range"] = "bytes=0-"
-
-        # Tell Stremio NOT to send more ranges
-        proxy_headers.response["Accept-Ranges"] = "none"
-
-        # Avoid Vidoza caching conflict
-        proxy_headers.response["Cache-Control"] = "no-store"
-
-    # -----------------------------------------------------
-    # 4) NORMAL STREAM HANDLING FOR EVERYTHING ELSE
-    # -----------------------------------------------------
+    
     content_range = proxy_headers.request.get("range", "bytes=0-")
     if "nan" in content_range.casefold():
+        # Handle invalid range requests "bytes=NaN-NaN"
         raise HTTPException(status_code=416, detail="Invalid Range Header")
-
-    proxy_headers.request["range"] = content_range
-
-    # -----------------------------------------------------
-    # 5) Optional filename support (Stremio downloads)
-    # -----------------------------------------------------
+    proxy_headers.request.update({"range": content_range})
     if filename:
+        # If a filename is provided, set it in the headers using RFC 6266 format
         try:
+            # Try to encode with latin-1 first (simple case)
             filename.encode("latin-1")
-            cd = f'attachment; filename="{filename}"'
+            content_disposition = f'attachment; filename="{filename}"'
         except UnicodeEncodeError:
-            encoded = quote(filename.encode("utf-8"))
-            cd = f"attachment; filename*=UTF-8''{encoded}"
+            # For filenames with non-latin-1 characters, use RFC 6266 format with UTF-8
+            encoded_filename = quote(filename.encode("utf-8"))
+            content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
 
-        proxy_headers.response["content-disposition"] = cd
+        proxy_headers.response.update({"content-disposition": content_disposition})
 
-    # -----------------------------------------------------
-    # 6) Stream final response back to Stremio
-    # -----------------------------------------------------
     return await proxy_stream(request.method, destination, proxy_headers)
+
+
+@proxy_router.get("/mpd/manifest.m3u8")
+async def mpd_manifest_proxy(
+    request: Request,
+    manifest_params: Annotated[MPDManifestParams, Query()],
+    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
+):
+    """
+    Retrieves and processes the MPD manifest, converting it to an HLS manifest.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        manifest_params (MPDManifestParams): The parameters for the manifest request.
+        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
+
+    Returns:
+        Response: The HTTP response with the HLS manifest.
+    """
+    # Extract DRM parameters from destination URL if they are incorrectly appended
+    clean_url, extracted_key_id, extracted_key = extract_drm_params_from_url(manifest_params.destination)
+    
+    # Update the destination with the cleaned URL
+    manifest_params.destination = clean_url
+    
+    # Use extracted parameters if they exist and the manifest params don't already have them
+    if extracted_key_id and not manifest_params.key_id:
+        manifest_params.key_id = extracted_key_id
+    if extracted_key and not manifest_params.key:
+        manifest_params.key = extracted_key
+    
+    # Sanitize destination URL to fix common encoding issues
+    manifest_params.destination = sanitize_url(manifest_params.destination)
+    
+    return await get_manifest(request, manifest_params, proxy_headers)
+
 
 @proxy_router.get("/mpd/playlist.m3u8")
 async def playlist_endpoint(
