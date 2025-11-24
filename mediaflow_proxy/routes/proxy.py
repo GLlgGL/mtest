@@ -602,94 +602,91 @@ async def proxy_stream_endpoint(
     filename: str | None = None,
 ):
     """
-    Proxify stream requests to the given video URL.
-    Handles:
-      - normal streams
-      - DLHD auto-extraction
-      - Vidoza/Videzz direct .mp4 anti-509 tweaks
+    Proxify direct MP4 / binary stream requests.
+    Includes Vidoza anti-509 protection and DLHD extractor handling.
     """
 
-    # Sanitize destination URL to fix common encoding issues
+    # Sanitize malformed URLs
     destination = sanitize_url(destination)
-    parsed = urlparse(destination)
-    host = (parsed.hostname or "").lower()
 
-    is_vidoza_mp4 = destination.endswith(".mp4") and (
-        "vidoza" in host or "videzz" in host
+    # Apply DLHD extractor if necessary
+    dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
+    if dlhd_result:
+        destination = dlhd_result["destination_url"]
+        proxy_headers.request.update(dlhd_result.get("request_headers", {}))
+
+    # -------------------------
+    # DETECT VIDOZA MP4 STREAM
+    # -------------------------
+    is_vidoza_mp4 = (
+        destination.endswith(".mp4")
+        and ("vidoza" in destination or "videzz" in destination)
     )
 
-    # -------------------------
-    # 1) Special-case VIDOZA
-    # -------------------------
     if is_vidoza_mp4:
-        # Vidoza doesn't like HEAD from bots – just say "OK" without hitting origin
+
+        # --------------------------
+        # 1) HANDLE HEAD REQUESTS
+        # --------------------------
+        # Stremio sends HEAD first and expects metadata, not real content.
+        # We DO NOT contact Vidoza for HEAD, because Vidoza rejects HEAD.
         if request.method == "HEAD":
-            # Tell Stremio we don't support ranges to reduce spammy probing
             return Response(
                 status_code=200,
                 headers={
-                    "Accept-Ranges": "none",
+                    "Accept-Ranges": "bytes",  # allow Stremio hashing
                     "Cache-Control": "no-store",
                 },
             )
 
-        # Ensure referer is correct for anti-hotlink
-        proxy_headers.request.setdefault("referer", "https://vidoza.net/")
+        # --------------------------
+        # 2) FORCE CORRECT REFERER
+        # --------------------------
+        proxy_headers.request["referer"] = "https://vidoza.net/"
 
-        # We *do not* force our own Range header here.
-        # If Stremio sends a Range, we pass it. If not, we let origin decide.
-        content_range = proxy_headers.request.get("range")
-        if content_range and "nan" in content_range.casefold():
-            raise HTTPException(status_code=416, detail="Invalid Range Header")
+        # --------------------------
+        # 3) SANITIZE RANGE HEADER
+        # --------------------------
+        incoming_range = proxy_headers.request.get("range")
 
-        # Tell the client (Stremio) that we don't support ranges,
-        # to discourage it from sending weird multi-range repeat requests.
-        proxy_headers.response.setdefault("Accept-Ranges", "none")
-        proxy_headers.response.setdefault("Cache-Control", "no-store")
+        if not incoming_range or incoming_range.strip() == "":
+            # Stremio sometimes doesn't send range → force valid range
+            proxy_headers.request["range"] = "bytes=0-"
 
-        # Handle filename if provided
-        if filename:
-            try:
-                filename.encode("latin-1")
-                content_disposition = f'attachment; filename="{filename}"'
-            except UnicodeEncodeError:
-                encoded = quote(filename.encode("utf-8"))
-                content_disposition = f"attachment; filename*=UTF-8''{encoded}"
+        else:
+            # Vidoza rejects multi-range requests → cause 509
+            if "," in incoming_range:
+                proxy_headers.request["range"] = "bytes=0-"
 
-            proxy_headers.response["content-disposition"] = content_disposition
+            # Vidoza rejects invalid ranges
+            if "nan" in incoming_range.lower():
+                proxy_headers.request["range"] = "bytes=0-"
 
-        # Normal proxied stream for this mp4
+        # DON'T disable Accept-Ranges!
+        # Stremio needs this to hash
+        # DON'T rewrite Accept-Ranges
+
+        # Return Vidoza stream
         return await proxy_stream("GET", destination, proxy_headers)
 
-    # ------------------------------------------------
-    # 2) Non-Vidoza: keep your original behavior
-    # ------------------------------------------------
-
-    # Check if destination contains DLHD pattern and extract stream directly
-    dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
-    if dlhd_result:
-        # Update destination and headers with extracted stream data
-        destination = dlhd_result["destination_url"]
-        proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-
+    # --------------------------
+    # NORMAL STREAM HANDLING
+    # --------------------------
     content_range = proxy_headers.request.get("range", "bytes=0-")
     if "nan" in content_range.casefold():
-        # Handle invalid range requests "bytes=NaN-NaN"
         raise HTTPException(status_code=416, detail="Invalid Range Header")
     proxy_headers.request.update({"range": content_range})
 
+    # Handle filename disposition
     if filename:
-        # If a filename is provided, set it in the headers using RFC 6266 format
         try:
-            # Try to encode with latin-1 first (simple case)
             filename.encode("latin-1")
-            content_disposition = f'attachment; filename="{filename}"'
+            cd = f'attachment; filename="{filename}"'
         except UnicodeEncodeError:
-            # For filenames with non-latin-1 characters, use RFC 6266 format with UTF-8
-            encoded_filename = quote(filename.encode("utf-8"))
-            content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+            encoded = quote(filename.encode("utf-8"))
+            cd = f"attachment; filename*=UTF-8''{encoded}"
 
-        proxy_headers.response.update({"content-disposition": content_disposition})
+        proxy_headers.response["content-disposition"] = cd
 
     return await proxy_stream(request.method, destination, proxy_headers)
 
