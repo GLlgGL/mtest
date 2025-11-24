@@ -194,6 +194,68 @@ def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
 
     response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
+    
+def encode_mediaflow_proxy_url(
+    mediaflow_proxy_url: str,
+    endpoint: typing.Optional[str] = None,
+    destination_url: typing.Optional[str] = None,
+    query_params: typing.Optional[dict] = None,
+    request_headers: typing.Optional[dict] = None,
+    response_headers: typing.Optional[dict] = None,
+    encryption_handler: EncryptionHandler = None,
+    expiration: int = None,
+    ip: str = None,
+    filename: typing.Optional[str] = None,
+) -> str:
+    """
+    Encodes & Encrypt (Optional) a MediaFlow proxy URL with query parameters and headers.
+    """
+    query_params = query_params or {}
+
+    if destination_url:
+        query_params["d"] = destination_url
+
+    if request_headers:
+        query_params.update(
+            {f"h_{k}" if not k.startswith("h_") else k: v for k, v in request_headers.items()}
+        )
+
+    if response_headers:
+        query_params.update(
+            {f"r_{k}" if not k.startswith("r_") else k: v for k, v in response_headers.items()}
+        )
+
+    if endpoint is None:
+        base_url = mediaflow_proxy_url.rstrip("/")
+    else:
+        base_url = parse.urljoin(mediaflow_proxy_url.rstrip("/"), endpoint.lstrip("/"))
+
+    # ---- ENCRYPTED URL MODE ----
+    if encryption_handler:
+        encrypted_token = encryption_handler.encrypt_data(query_params, expiration, ip)
+
+        parsed = parse.urlparse(base_url)
+        new_path = f"/_token_{encrypted_token}{parsed.path}"
+
+        rebuilt = list(parsed)
+        rebuilt[2] = new_path
+
+        final_url = parse.urlunparse(rebuilt)
+
+        if filename:
+            final_url = f"{final_url}/{parse.quote(filename)}"
+
+        return final_url
+
+    # ---- PLAIN QUERY PARAM MODE ----
+    url = base_url
+    if filename:
+        url = f"{url}/{parse.quote(filename)}"
+
+    if query_params:
+        return f"{url}?{urlencode(query_params)}"
+
+    return url
 
 
 class EnhancedStreamingResponse(Response):
