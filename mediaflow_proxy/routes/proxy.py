@@ -1,5 +1,5 @@
 from typing import Annotated
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 import re
 import logging
 import httpx
@@ -591,7 +591,6 @@ async def dash_segment_proxy(
     # Fallback to direct streaming if not in cache
     return await handle_stream_request("GET", segment_url, proxy_headers)
 
-
 @proxy_router.head("/stream")
 @proxy_router.get("/stream")
 @proxy_router.head("/stream/{filename:path}")
@@ -604,31 +603,81 @@ async def proxy_stream_endpoint(
 ):
     """
     Proxify stream requests to the given video URL.
-
-    Args:
-        request (Request): The incoming HTTP request.
-        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
-        destination (str): The URL of the stream to be proxied.
-        filename (str | None): The filename to be used in the response headers.
-
-    Returns:
-        Response: The HTTP response with the streamed content.
+    Handles:
+      - normal streams
+      - DLHD auto-extraction
+      - Vidoza/Videzz direct .mp4 anti-509 tweaks
     """
+
     # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-    
+    parsed = urlparse(destination)
+    host = (parsed.hostname or "").lower()
+
+    is_vidoza_mp4 = destination.endswith(".mp4") and (
+        "vidoza" in host or "videzz" in host
+    )
+
+    # -------------------------
+    # 1) Special-case VIDOZA
+    # -------------------------
+    if is_vidoza_mp4:
+        # Vidoza doesn't like HEAD from bots – just say "OK" without hitting origin
+        if request.method == "HEAD":
+            # Tell Stremio we don't support ranges to reduce spammy probing
+            return Response(
+                status_code=200,
+                headers={
+                    "Accept-Ranges": "none",
+                    "Cache-Control": "no-store",
+                },
+            )
+
+        # Ensure referer is correct for anti-hotlink
+        proxy_headers.request.setdefault("referer", "https://vidoza.net/")
+
+        # We *do not* force our own Range header here.
+        # If Stremio sends a Range, we pass it. If not, we let origin decide.
+        content_range = proxy_headers.request.get("range")
+        if content_range and "nan" in content_range.casefold():
+            raise HTTPException(status_code=416, detail="Invalid Range Header")
+
+        # Tell the client (Stremio) that we don't support ranges,
+        # to discourage it from sending weird multi-range repeat requests.
+        proxy_headers.response.setdefault("Accept-Ranges", "none")
+        proxy_headers.response.setdefault("Cache-Control", "no-store")
+
+        # Handle filename if provided
+        if filename:
+            try:
+                filename.encode("latin-1")
+                content_disposition = f'attachment; filename="{filename}"'
+            except UnicodeEncodeError:
+                encoded = quote(filename.encode("utf-8"))
+                content_disposition = f"attachment; filename*=UTF-8''{encoded}"
+
+            proxy_headers.response["content-disposition"] = content_disposition
+
+        # Normal proxied stream for this mp4
+        return await proxy_stream("GET", destination, proxy_headers)
+
+    # ------------------------------------------------
+    # 2) Non-Vidoza: keep your original behavior
+    # ------------------------------------------------
+
     # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
     if dlhd_result:
         # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-    
+
     content_range = proxy_headers.request.get("range", "bytes=0-")
     if "nan" in content_range.casefold():
         # Handle invalid range requests "bytes=NaN-NaN"
         raise HTTPException(status_code=416, detail="Invalid Range Header")
     proxy_headers.request.update({"range": content_range})
+
     if filename:
         # If a filename is provided, set it in the headers using RFC 6266 format
         try:
@@ -643,7 +692,6 @@ async def proxy_stream_endpoint(
         proxy_headers.response.update({"content-disposition": content_disposition})
 
     return await proxy_stream(request.method, destination, proxy_headers)
-
 
 @proxy_router.get("/mpd/manifest.m3u8")
 async def mpd_manifest_proxy(
