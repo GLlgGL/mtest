@@ -4,7 +4,7 @@ from typing import Dict, Any
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
-class TurboVIPlayExtractor(BaseExtractor):
+class TurboVidPlayExtractor(BaseExtractor):
 
     mediaflow_endpoint = "hls_manifest_proxy"
 
