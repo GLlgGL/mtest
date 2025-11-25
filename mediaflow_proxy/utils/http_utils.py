@@ -198,8 +198,8 @@ class Streamer:
                 yield chunk
                 self.bytes_transferred += len(chunk)
 
-    except Exception as e:
-        raise
+        except Exception as e:
+            raise
 
     @staticmethod
     def format_bytes(size) -> str:
