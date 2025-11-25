@@ -133,8 +133,8 @@ class Streamer:
             raise RuntimeError(f"Error creating streaming response: {e}")
 
     async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
-    if not self.response:
-        raise RuntimeError("No response available for streaming")
+        if not self.response:
+            raise RuntimeError("No response available for streaming")
 
     self.parse_content_range()
 
