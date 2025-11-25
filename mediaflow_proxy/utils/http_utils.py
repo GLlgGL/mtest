@@ -171,7 +171,7 @@ class Streamer:
                                 if not chunk.startswith(TS_SYNC):
                                    sync = chunk.find(TS_SYNC)
                                        if sync != -1:
-                                        chunk = chunk[sync:]
+                                          chunk = chunk[sync:]
 
                     # Stream cleaned chunk
                     yield chunk
