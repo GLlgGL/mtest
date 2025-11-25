@@ -139,16 +139,15 @@ class Streamer:
         try:
             self.parse_content_range()
 
-            # --- UNIVERSAL MPEG-TS FIX ---
-            # Works for StreamWish, FileLions, TikTok CDN, and any provider
-            # adding junk bytes, PNG headers, or garbage before TS packets.
-            def clean_ts(chunk: bytes) -> bytes:
-                sync_pos = chunk.find(b"\x47")  # MPEG-TS sync byte
+            # --- UNIVERSAL MPEG-TS PREFIX FIX ---
+            # Strip only leading garbage BEFORE the first 0x47.
+            def clean_ts_prefix(chunk: bytes) -> bytes:
+                sync_pos = chunk.find(b"\x47")
                 if sync_pos > 0:
-                    return chunk[sync_pos:]
+                    return chunk[sync_pos:]   # remove only the garbage prefix
                 return chunk
 
-            first_chunk_processed = False
+            first_chunk = True
 
             if settings.enable_streaming_progress:
                 with tqdm_asyncio(
@@ -164,9 +163,9 @@ class Streamer:
 
                     async for chunk in self.response.aiter_bytes():
 
-                        if not first_chunk_processed:
-                            first_chunk_processed = True
-                            chunk = clean_ts(chunk)
+                        if first_chunk:
+                            chunk = clean_ts_prefix(chunk)
+                            first_chunk = False
 
                         yield chunk
                         size = len(chunk)
@@ -176,12 +175,13 @@ class Streamer:
             else:
                 async for chunk in self.response.aiter_bytes():
 
-                    if not first_chunk_processed:
-                        first_chunk_processed = True
-                        chunk = clean_ts(chunk)
+                    if first_chunk:
+                        chunk = clean_ts_prefix(chunk)
+                        first_chunk = False
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
+
         except Exception as e:
             raise
             
