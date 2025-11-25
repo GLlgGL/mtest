@@ -139,9 +139,8 @@ class Streamer:
         try:
             self.parse_content_range()
 
-            # --- Global PNG Strip ---
+            # --- STREAMWISH FIX ---
             FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
-            IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
             first_chunk_processed = False
 
             if settings.enable_streaming_progress:
@@ -158,17 +157,10 @@ class Streamer:
                     async for chunk in self.response.aiter_bytes():
 
                         # Remove StreamWish fake PNG header (only on first chunk)
-                        if (not first_chunk_processed) and chunk.startswith(FAKE_PNG_HEADER):
+                        if not first_chunk_processed:
                             first_chunk_processed = True
-                            sync = chunk.find(IEND)
-                            if sync != -1:
-                                pos = sync + len(IEND)
-                                while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
-                                    pos += 1
-                                    chunk = chunk[pos:]
-                            else:
-                                    first_chunk_processed = True
-                            
+                            if chunk.startswith(FAKE_PNG_HEADER):
+                                chunk = chunk[len(FAKE_PNG_HEADER):]
 
                         yield chunk
                         self.bytes_transferred += len(chunk)
@@ -177,19 +169,14 @@ class Streamer:
             else:
                 async for chunk in self.response.aiter_bytes():
 
-                    # *** Global ***
-                    if (not first_chunk_processed) and chunk.startswith(FAKE_PNG_HEADER):
+                    # *** STREAMWISH 8-BYTE HEADER CUT ***
+                    if not first_chunk_processed:
                         first_chunk_processed = True
-                        sync = chunk.find(IEND)
-                        if sync != -1:
-                            pos = sync + len(IEND)
-                            while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
-                                pos += 1
-                                chunk = chunk[pos:]
-                        else:
-                                first_chunk_processed = True
-                                yield chunk
-                                self.bytes_transferred += len(chunk)
+                        if chunk.startswith(FAKE_PNG_HEADER):
+                            chunk = chunk[len(FAKE_PNG_HEADER):]
+
+                    yield chunk
+                    self.bytes_transferred += len(chunk)
 
         except Exception as e:
             raise
