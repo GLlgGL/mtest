@@ -163,14 +163,18 @@ class Streamer:
             logger.error(f"Error creating streaming response: {e}")
             raise RuntimeError(f"Error creating streaming response: {e}")
 
-    async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
-    if not self.response:
-        raise RuntimeError("No response available for streaming")
+  async def create_streaming_response(self, url: str, headers: dict):
+        """
+        Creates and sends a streaming request.
 
-    try:
-        self.parse_content_range()
+        Args:
+            url (str): The URL to stream from.
+            headers (dict): The headers to include in the request.
 
-        first_chunk_processed = False
+        """
+        try:
+            self.parse_content_range()
+            first_chunk_processed = False
 
         if settings.enable_streaming_progress:
             with tqdm_asyncio(
