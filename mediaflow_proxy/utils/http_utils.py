@@ -132,7 +132,7 @@ class Streamer:
             logger.error(f"Error creating streaming response: {e}")
             raise RuntimeError(f"Error creating streaming response: {e}")
 
-        async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
+    async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
         if not self.response:
             raise RuntimeError("No response available for streaming")
 
