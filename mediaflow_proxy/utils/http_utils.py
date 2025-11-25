@@ -186,14 +186,14 @@ class Streamer:
                        chunk = chunk[len(FAKE_PNG_HEADER):]
 
                        pos = chunk.find(IEND)
-                         if pos != -1:
-                           chunk = chunk[pos + len(IEND):]
+                    if pos != -1:
+                       chunk = chunk[pos + len(IEND):]
 
                 # --- Align to TS sync bytes ---
-                             if not chunk.startswith(TS_SYNC):
-                               sync = chunk.find(TS_SYNC)
-                                if sync != -1:
-                                  chunk = chunk[sync:]
+                    if not chunk.startswith(TS_SYNC):
+                       sync = chunk.find(TS_SYNC)
+                    if sync != -1:
+                       chunk = chunk[sync:]
 
                 yield chunk
                 self.bytes_transferred += len(chunk)
