@@ -5,54 +5,69 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class TurboVidPlayExtractor(BaseExtractor):
+    domains = [
+        "turboviplay.com",
+        "emturbovid.com",
+        "tuborstb.co",
+        "javggvideo.xyz",
+        "stbturbo.xyz",
+        "turbovidhls.com",
+    ]
 
     mediaflow_endpoint = "hls_manifest_proxy"
 
-    PATTERN = re.compile(
-        r'(?:urlPlay|data-hash)\s*=\s*[\'"](?P<url>[^\'"]+)',
-        re.DOTALL
-    )
-
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         #
-        # 1. Fetch embed page
+        # 1. Load embed
         #
         response = await self._make_request(url)
-        body = response.text
-
-        if "File Not Found" in body or "Pending in queue" in body:
-            raise ExtractorError("TurboVIPlay: Video not available")
+        html = response.text
 
         #
-        # 2. Extract media URL exactly like ResolveURL
+        # 2. Extract "urlPlay" or "data-hash"
         #
-        m = self.PATTERN.search(body)
+        m = re.search(r'(?:urlPlay|data-hash)\s*=\s*[\'"]([^\'"]+)', html)
         if not m:
-            raise ExtractorError("TurboVIPlay: media URL not found")
+            raise ExtractorError("TurboViPlay: No media URL found")
 
-        media_url = m.group("url")
+        media_url = m.group(1)
 
-        #
-        # 3. Normalize to absolute URL
-        #
+        # Normalize protocol
         if media_url.startswith("//"):
-            final_url = "https:" + media_url
+            media_url = "https:" + media_url
         elif media_url.startswith("/"):
-            origin = re.match(r"https?://[^/]+", url).group(0)
-            final_url = origin + media_url
-        else:
-            final_url = media_url
+            media_url = response.url.origin + media_url
 
         #
-        # 4. Set referer header
+        # 3. Fetch the intermediate /data/ playlist
+        #
+        data_resp = await self._make_request(media_url, headers={"Referer": url})
+        playlist = data_resp.text
+
+        #
+        # 4. Extract REAL master playlist from inside /data/
+        #
+        # Examples inside:
+        # https://g254.turbosplayer.com/file/<uuid>/master.m3u8
+        #
+        real_m3u8 = None
+        m2 = re.search(r'https://[^\'"\s]+/master\.m3u8', playlist)
+        if m2:
+            real_m3u8 = m2.group(0)
+
+        if not real_m3u8:
+            raise ExtractorError("TurboViPlay: Unable to extract real master playlist")
+
+        #
+        # 5. Set referer for final request
         #
         self.base_headers["referer"] = url
 
         #
-        # 5. Output in MediaFlow format
+        # 6. Output final master URL → MediaFlow will clean PNG headers
         #
         return {
-            "destination_url": final_url,
+            "destination_url": real_m3u8,
             "request_headers": self.base_headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
         }
