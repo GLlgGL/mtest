@@ -140,11 +140,12 @@ class Streamer:
         self.parse_content_range()
 
         # --- UNIVERSAL MPEG-TS FIX ---
-        # Strip anything before the first sync byte 0x47
+        # Works for StreamWish, FileLions, TikTok Ads CDN, and others.
+        # Removes EVERYTHING before the first MPEG-TS sync byte 0x47.
         def clean_ts(chunk: bytes) -> bytes:
             sync = chunk.find(b"\x47")
             if sync > 0:
-                return chunk[sync:]
+                return chunk[sync:]  # Strip garbage
             return chunk
 
         first_chunk_processed = False
@@ -181,28 +182,32 @@ class Streamer:
                 yield chunk
                 self.bytes_transferred += len(chunk)
 
-    except Exception as e:
+    except Exception:
         raise
-            
-    @staticmethod
-    def format_bytes(size) -> str:
-        power = 2**10
-        n = 0
-        units = {0: "B", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
-        while size > power:
-            size /= power
-            n += 1
-        return f"{size:.2f} {units[n]}"
 
-    def parse_content_range(self):
-        content_range = self.response.headers.get("Content-Range", "")
-        if content_range:
-            range_info = content_range.split()[-1]
-            self.start_byte, self.end_byte, self.total_size = map(int, range_info.replace("/", "-").split("-"))
-        else:
-            self.start_byte = 0
-            self.total_size = int(self.response.headers.get("Content-Length", 0))
-            self.end_byte = self.total_size - 1 if self.total_size > 0 else 0
+
+@staticmethod
+def format_bytes(size) -> str:
+    power = 2**10
+    n = 0
+    units = {0: "B", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
+    while size > power:
+        size /= power
+        n += 1
+    return f"{size:.2f} {units[n]}"
+
+
+def parse_content_range(self):
+    content_range = self.response.headers.get("Content-Range", "")
+    if content_range:
+        range_info = content_range.split()[-1]
+        self.start_byte, self.end_byte, self.total_size = map(
+            int, range_info.replace("/", "-").split("-")
+        )
+    else:
+        self.start_byte = 0
+        self.total_size = int(self.response.headers.get("Content-Length", 0))
+        self.end_byte = self.total_size - 1 if self.total_size > 0 else 0
 
     async def get_text(self, url: str, headers: dict):
         """
