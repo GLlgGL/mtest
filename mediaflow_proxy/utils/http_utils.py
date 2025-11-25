@@ -136,6 +136,7 @@ class Streamer:
         if not self.response:
             raise RuntimeError("No response available for streaming")
 
+        try:
             self.parse_content_range()
 
             # --- STREAMWISH FIX ---
@@ -176,6 +177,9 @@ class Streamer:
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
+
+        except Exception as e:
+            raise
             
     @staticmethod
     def format_bytes(size) -> str:
