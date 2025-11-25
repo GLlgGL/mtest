@@ -139,10 +139,9 @@ class Streamer:
         try:
             self.parse_content_range()
 
-            # Universal garbage-removal signatures
+            # --- STREAMWISH FIX ---
             FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
-            IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
-            TS_SYNC = b"\x47\x40"  # MPEG-TS packet start
+            first_chunk_processed = False
 
             if settings.enable_streaming_progress:
                 with tqdm_asyncio(
@@ -155,52 +154,33 @@ class Streamer:
                     ncols=100,
                     mininterval=1,
                 ) as self.progress_bar:
-
                     async for chunk in self.response.aiter_bytes():
 
-                        # --- Remove PNG header if present ---
-                        if chunk.startswith(FAKE_PNG_HEADER):
-                             chunk = chunk[len(FAKE_PNG_HEADER):]
+                        # Remove StreamWish fake PNG header (only on first chunk)
+                        if not first_chunk_processed:
+                            first_chunk_processed = True
+                            if chunk.startswith(FAKE_PNG_HEADER):
+                                chunk = chunk[len(FAKE_PNG_HEADER):]
 
-                             # If full PNG exists, remove up to end of IEND
-                             pos = chunk.find(IEND)
-                             if pos != -1:
-                                chunk = chunk[pos + len(IEND):]
-
-                                 # --- Ensure TS sync (0x47 0x40) ---
-                                if not chunk.startswith(TS_SYNC):
-                                   sync = chunk.find(TS_SYNC)
-                                if sync != -1:
-                                   chunk = chunk[sync:]
-
-                    # Stream cleaned chunk
-                    yield chunk
-                    self.bytes_transferred += len(chunk)
-                    self.progress_bar.update(len(chunk))
+                        yield chunk
+                        self.bytes_transferred += len(chunk)
+                        self.progress_bar.update(len(chunk))
 
             else:
                 async for chunk in self.response.aiter_bytes():
 
-                     # --- Remove PNG header if present ---
-                    if chunk.startswith(FAKE_PNG_HEADER):
-                       chunk = chunk[len(FAKE_PNG_HEADER):]
+                    # *** STREAMWISH 8-BYTE HEADER CUT ***
+                    if not first_chunk_processed:
+                        first_chunk_processed = True
+                        if chunk.startswith(FAKE_PNG_HEADER):
+                            chunk = chunk[len(FAKE_PNG_HEADER):]
 
-                       pos = chunk.find(IEND)
-                    if pos != -1:
-                       chunk = chunk[pos + len(IEND):]
-
-                # --- Align to TS sync bytes ---
-                    if not chunk.startswith(TS_SYNC):
-                       sync = chunk.find(TS_SYNC)
-                    if sync != -1:
-                       chunk = chunk[sync:]
-
-                yield chunk
-                self.bytes_transferred += len(chunk)
+                    yield chunk
+                    self.bytes_transferred += len(chunk)
 
         except Exception as e:
             raise
-
+            
     @staticmethod
     def format_bytes(size) -> str:
         power = 2**10
