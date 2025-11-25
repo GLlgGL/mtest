@@ -133,19 +133,19 @@ class Streamer:
             raise RuntimeError(f"Error creating streaming response: {e}")
 
     async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
-        if not self.response:
-            raise RuntimeError("No response available for streaming")
-            
-            try:
-            self.parse_content_range()
-        # Universal garbage-removal signatures
-            FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
-            IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
-            TS_SYNC = b"\x47\x40"  # MPEG-TS packet start
+    if not self.response:
+        raise RuntimeError("No response available for streaming")
 
-            if settings.enable_streaming_progress:
-                
-                with tqdm_asyncio(
+    try:
+        self.parse_content_range()
+
+        # Universal garbage-removal signatures
+        FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+        IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
+        TS_SYNC = b"\x47\x40"  # MPEG-TS packet start
+
+        if settings.enable_streaming_progress:
+            with tqdm_asyncio(
                 total=self.total_size,
                 initial=self.start_byte,
                 unit="B",
@@ -155,18 +155,17 @@ class Streamer:
                 ncols=100,
                 mininterval=1,
             ) as self.progress_bar:
-            
-            async for chunk in self.response.aiter_bytes():
-                
+
+                async for chunk in self.response.aiter_bytes():
 
                     # --- Remove PNG header if present ---
-               if chunk.startswith(FAKE_PNG_HEADER):
-               chunk = chunk[len(FAKE_PNG_HEADER):]
+                    if chunk.startswith(FAKE_PNG_HEADER):
+                        chunk = chunk[len(FAKE_PNG_HEADER):]
 
                         # If full PNG exists, remove up to end of IEND
-               pos = chunk.find(IEND)
-                    if pos != -1:
-                    chunk = chunk[pos + len(IEND):]
+                        pos = chunk.find(IEND)
+                        if pos != -1:
+                            chunk = chunk[pos + len(IEND):]
 
                     # --- Ensure TS sync (0x47 0x40) ---
                     if not chunk.startswith(TS_SYNC):
@@ -201,7 +200,7 @@ class Streamer:
 
     except Exception as e:
         raise
-            
+
     @staticmethod
     def format_bytes(size) -> str:
         power = 2**10
