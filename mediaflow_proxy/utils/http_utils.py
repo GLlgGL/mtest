@@ -23,46 +23,6 @@ from mediaflow_proxy.utils.crypto_utils import EncryptionHandler
 
 logger = logging.getLogger(__name__)
 
-def strip_leading_png(data: bytes) -> bytes:
-    """
-    Strip a fake PNG header + padding from the beginning of a TS segment.
-
-    Returns the original data unchanged if it does not start with a PNG.
-    """
-    PNG_SIG = b"\x89PNG\r\n\x1a\n"
-
-    # Not a PNG → return as-is
-    if not data.startswith(PNG_SIG):
-        return data
-
-    pos = len(PNG_SIG)
-    end = len(data)
-
-    # Walk PNG chunks until IEND
-    while pos + 8 <= end:
-        # length (4 bytes) + type (4 bytes)
-        length = int.from_bytes(data[pos:pos + 4], "big")
-        chunk_type = data[pos + 4:pos + 8]
-
-        # advance: length + type + data + CRC (4)
-        pos += 8 + length + 4
-
-        # Safety: corrupted PNG, bail out
-        if pos > end:
-            return data
-
-        if chunk_type == b"IEND":
-            break
-    else:
-        # Never saw IEND → probably not a valid PNG, keep original
-        return data
-
-    # Skip common padding bytes after the fake PNG (0x00, 0xFF)
-    while pos < end and data[pos] in (0x00, 0xFF):
-        pos += 1
-
-    # Return whatever is left (ideally starts with 0x47 for TS)
-    return data[pos:]
 
 class DownloadError(Exception):
     def __init__(self, status_code, message):
@@ -179,8 +139,9 @@ class Streamer:
         try:
             self.parse_content_range()
 
-            
-            
+            # --- Global PNG Strip ---
+            FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+            IEND = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
             first_chunk_processed = False
 
             if settings.enable_streaming_progress:
@@ -196,10 +157,18 @@ class Streamer:
                 ) as self.progress_bar:
                     async for chunk in self.response.aiter_bytes():
 
-                        # --- Global PNG Removal ---
-                        if not first_chunk_processed:
+                        # Remove StreamWish fake PNG header (only on first chunk)
+                        if (not first_chunk_processed) and chunk.startswith(FAKE_PNG_HEADER):
                             first_chunk_processed = True
-                            chunk = strip_leading_png(chunk)
+                            sync = chunk.find(IEND)
+                            if sync != -1:
+                                pos = sync + len(IEND)
+                                while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
+                                    pos += 1
+                                    chunk = chunk[pos:]
+                                    else:
+                                        first_chunk_processed = True
+                            
 
                         yield chunk
                         self.bytes_transferred += len(chunk)
@@ -208,13 +177,19 @@ class Streamer:
             else:
                 async for chunk in self.response.aiter_bytes():
 
-                    # --- Global PNG Removal ---
-                    if not first_chunk_processed:
+                    # *** Global ***
+                    if (not first_chunk_processed) and chunk.startswith(FAKE_PNG_HEADER):
                         first_chunk_processed = True
-                        chunk = strip_leading_png(chunk)
-
-                    yield chunk
-                    self.bytes_transferred += len(chunk)
+                        sync = chunk.find(IEND)
+                        if sync != -1:
+                            pos = sync + len(IEND)
+                            while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
+                                pos += 1
+                                chunk = chunk[pos:]
+                                else:
+                                    first_chunk_processed = True
+                                    yield chunk
+                                    self.bytes_transferred += len(chunk)
 
         except Exception as e:
             raise
