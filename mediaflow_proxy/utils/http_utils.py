@@ -140,11 +140,12 @@ class Streamer:
             self.parse_content_range()
 
             # --- UNIVERSAL MPEG-TS FIX ---
-            # Strip garbage until first sync byte (0x47)
+            # Works for StreamWish, FileLions, TikTok CDN, and any provider
+            # adding junk bytes, PNG headers, or garbage before TS packets.
             def clean_ts(chunk: bytes) -> bytes:
-                sync = chunk.find(b"\x47")
-                if sync > 0:
-                    return chunk[sync:]
+                sync_pos = chunk.find(b"\x47")  # MPEG-TS sync byte
+                if sync_pos > 0:
+                    return chunk[sync_pos:]
                 return chunk
 
             first_chunk_processed = False
@@ -163,7 +164,6 @@ class Streamer:
 
                     async for chunk in self.response.aiter_bytes():
 
-                        # Clean only the first chunk
                         if not first_chunk_processed:
                             first_chunk_processed = True
                             chunk = clean_ts(chunk)
@@ -182,7 +182,6 @@ class Streamer:
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
-
         except Exception as e:
             raise
             
