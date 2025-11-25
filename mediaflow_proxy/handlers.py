@@ -401,6 +401,9 @@ async def get_segment(
         segment_content = await download_file_with_retry(segment_params.segment_url, proxy_headers.request)
     except Exception as e:
         return handle_exceptions(e)
+        mime_type = segment_params.mime_type
+        if mime_type.startswith("image/"):
+            mime_type = "video/mp2t"
 
     return await process_segment(
         init_content,
