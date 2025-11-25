@@ -139,9 +139,8 @@ class Streamer:
         try:
             self.parse_content_range()
 
-            # --- PNG STRIP ---
+            # --- STREAMWISH FIX ---
             FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
-            TS_START_OFFSET = 0x4740
             first_chunk_processed = False
 
             if settings.enable_streaming_progress:
@@ -160,12 +159,8 @@ class Streamer:
                         # Remove StreamWish fake PNG header (only on first chunk)
                         if not first_chunk_processed:
                             first_chunk_processed = True
-                            
                             if chunk.startswith(FAKE_PNG_HEADER):
-                                if len(chunk) >= TS_START_OFFSET:
-                                    chunk = chunk[TS_START_OFFSET:]
-                                else:
-                                    continue
+                                chunk = chunk[len(FAKE_PNG_HEADER):]
 
                         yield chunk
                         self.bytes_transferred += len(chunk)
@@ -177,12 +172,8 @@ class Streamer:
                     # *** STREAMWISH 8-BYTE HEADER CUT ***
                     if not first_chunk_processed:
                         first_chunk_processed = True
-                        
                         if chunk.startswith(FAKE_PNG_HEADER):
-                           if len(chunk) >= TS_START_OFFSET:
-                               chunk = chunk[TS_START_OFFSET:]
-                           else:
-                               continue
+                            chunk = chunk[len(FAKE_PNG_HEADER):]
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
