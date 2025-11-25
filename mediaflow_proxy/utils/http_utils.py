@@ -139,15 +139,9 @@ class Streamer:
         try:
             self.parse_content_range()
 
-            # --- UNIVERSAL MPEG-TS PREFIX FIX ---
-            # Strip only leading garbage BEFORE the first 0x47.
-            def clean_ts_prefix(chunk: bytes) -> bytes:
-                sync_pos = chunk.find(b"\x47")
-                if sync_pos > 0:
-                    return chunk[sync_pos:]   # remove only the garbage prefix
-                return chunk
-
-            first_chunk = True
+            # --- STREAMWISH FIX ---
+            FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+            first_chunk_processed = False
 
             if settings.enable_streaming_progress:
                 with tqdm_asyncio(
@@ -160,24 +154,26 @@ class Streamer:
                     ncols=100,
                     mininterval=1,
                 ) as self.progress_bar:
-
                     async for chunk in self.response.aiter_bytes():
 
-                        if first_chunk:
-                            chunk = clean_ts_prefix(chunk)
-                            first_chunk = False
+                        # Remove StreamWish fake PNG header (only on first chunk)
+                        if not first_chunk_processed:
+                            first_chunk_processed = True
+                            if chunk.startswith(FAKE_PNG_HEADER):
+                                chunk = chunk[len(FAKE_PNG_HEADER):]
 
                         yield chunk
-                        size = len(chunk)
-                        self.bytes_transferred += size
-                        self.progress_bar.update(size)
+                        self.bytes_transferred += len(chunk)
+                        self.progress_bar.update(len(chunk))
 
             else:
                 async for chunk in self.response.aiter_bytes():
 
-                    if first_chunk:
-                        chunk = clean_ts_prefix(chunk)
-                        first_chunk = False
+                    # *** STREAMWISH 8-BYTE HEADER CUT ***
+                    if not first_chunk_processed:
+                        first_chunk_processed = True
+                        if chunk.startswith(FAKE_PNG_HEADER):
+                            chunk = chunk[len(FAKE_PNG_HEADER):]
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
