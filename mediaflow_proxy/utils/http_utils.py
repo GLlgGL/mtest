@@ -101,85 +101,63 @@ class Streamer:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         retry=retry_if_exception_type(DownloadError),
     )
-    async def create_streaming_response(self, url: str, headers: dict):
-        """
-        Creates and sends a streaming request.
-
-        Args:
-            url (str): The URL to stream from.
-            headers (dict): The headers to include in the request.
-
-        """
-        try:
-            request = self.client.build_request("GET", url, headers=headers)
-            self.response = await self.client.send(request, stream=True, follow_redirects=True)
-            self.response.raise_for_status()
-        except httpx.TimeoutException:
-            logger.warning("Timeout while creating streaming response")
-            raise DownloadError(409, "Timeout while creating streaming response")
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error {e.response.status_code} while creating streaming response")
-            if e.response.status_code == 404:
-                logger.error(f"Segment Resource not found: {url}")
-                raise e
-            raise DownloadError(
-                e.response.status_code, f"HTTP error {e.response.status_code} while creating streaming response"
-            )
-        except httpx.RequestError as e:
-            logger.error(f"Error creating streaming response: {e}")
-            raise DownloadError(502, f"Error creating streaming response: {e}")
-        except Exception as e:
-            logger.error(f"Error creating streaming response: {e}")
-            raise RuntimeError(f"Error creating streaming response: {e}")
-
     async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
-        if not self.response:
-            raise RuntimeError("No response available for streaming")
+    if not self.response:
+        raise RuntimeError("No response available for streaming")
 
-        try:
-            self.parse_content_range()
+    try:
+        self.parse_content_range()
 
-            # --- STREAMWISH FIX ---
-            FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
-            first_chunk_processed = False
+        FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+        TS_START_OFFSET = 0x4740   # 18240 bytes where TS begins
+        first_chunk_processed = False
 
-            if settings.enable_streaming_progress:
-                with tqdm_asyncio(
-                    total=self.total_size,
-                    initial=self.start_byte,
-                    unit="B",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    desc="Streaming",
-                    ncols=100,
-                    mininterval=1,
-                ) as self.progress_bar:
-                    async for chunk in self.response.aiter_bytes():
+        if settings.enable_streaming_progress:
+            with tqdm_asyncio(
+                total=self.total_size,
+                initial=self.start_byte,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+                desc="Streaming",
+                ncols=100,
+                mininterval=1,
+            ) as self.progress_bar:
 
-                        # Remove StreamWish fake PNG header (only on first chunk)
-                        if not first_chunk_processed:
-                            first_chunk_processed = True
-                            if chunk.startswith(FAKE_PNG_HEADER):
-                                chunk = chunk[len(FAKE_PNG_HEADER):]
-
-                        yield chunk
-                        self.bytes_transferred += len(chunk)
-                        self.progress_bar.update(len(chunk))
-
-            else:
                 async for chunk in self.response.aiter_bytes():
 
-                    # *** STREAMWISH 8-BYTE HEADER CUT ***
+                    # Strip header only on first chunk of segment
                     if not first_chunk_processed:
                         first_chunk_processed = True
+
                         if chunk.startswith(FAKE_PNG_HEADER):
-                            chunk = chunk[len(FAKE_PNG_HEADER):]
+                            if len(chunk) >= TS_START_OFFSET:
+                                chunk = chunk[TS_START_OFFSET:]
+                            else:
+                                # Entire chunk is PNG → ignore it
+                                continue
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
+                    self.progress_bar.update(len(chunk))
 
-        except Exception as e:
-            raise
+        else:
+            async for chunk in self.response.aiter_bytes():
+
+                if not first_chunk_processed:
+                    first_chunk_processed = True
+
+                    if chunk.startswith(FAKE_PNG_HEADER):
+                        if len(chunk) >= TS_START_OFFSET:
+                            chunk = chunk[TS_START_OFFSET:]
+                        else:
+                            continue
+
+                yield chunk
+                self.bytes_transferred += len(chunk)
+
+    except Exception as e:
+        raise
             
     @staticmethod
     def format_bytes(size) -> str:
