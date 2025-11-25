@@ -46,7 +46,7 @@ class ExtractorFactory:
         "Vidoza": VidozaExtractor,
         "Fastream": FastreamExtractor,
         "Voe": VoeExtractor,
-        "TurboViPlay": TurboViPlayExtractor,
+        "TurboVidPlay": TurboVidPlayExtractor,
         "StreamWish": StreamWishExtractor,
         "Sportsonline": SportsonlineExtractor,
     }
