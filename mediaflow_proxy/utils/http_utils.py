@@ -140,7 +140,7 @@ class Streamer:
         self.parse_content_range()
 
         # --- UNIVERSAL MPEG-TS FIX ---
-        # Strip everything before first TS sync byte (0x47)
+        # Strip anything before the first sync byte 0x47
         def clean_ts(chunk: bytes) -> bytes:
             sync = chunk.find(b"\x47")
             if sync > 0:
