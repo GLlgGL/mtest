@@ -29,12 +29,11 @@ class DownloadError(Exception):
         self.status_code = status_code
         self.message = message
         super().__init__(message)
-    def strip_leading_png(data: bytes) -> bytes:
-    """
-    Detects and removes a full PNG file (signature → chunks → IEND → padding)
-    then returns the remaining bytes (e.g. TS segment).
-    If data is not PNG → returns unchanged.
-    """
+    # ---------------------------
+# Add this anywhere globally:
+# ---------------------------
+
+def strip_leading_png(data: bytes) -> bytes:
     PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
     if not data.startswith(PNG_SIG):
@@ -43,31 +42,24 @@ class DownloadError(Exception):
     pos = len(PNG_SIG)
     end = len(data)
 
-    # PNG = signature + chunks
     while pos + 8 <= end:
         chunk_len = int.from_bytes(data[pos:pos+4], "big")
         chunk_type = data[pos+4:pos+8]
-        pos += 8  # passed len+type
-
-        # chunk data + CRC
-        pos += chunk_len + 4
+        pos += 8 + chunk_len + 4
 
         if chunk_type == b"IEND":
             break
     else:
-        # failed to parse → return original
         return data
 
-    # skip padding bytes until TS sync (0x47)
     while pos < end and data[pos] in (0x00, 0xFF):
         pos += 1
 
-    # if valid TS packet start
     if pos < end and data[pos] == 0x47:
         return data[pos:]
 
-    # fallback — return whatever is after PNG
     return data[pos:]
+
 
 
 def create_httpx_client(follow_redirects: bool = True, **kwargs) -> httpx.AsyncClient:
