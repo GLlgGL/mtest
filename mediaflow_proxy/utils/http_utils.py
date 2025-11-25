@@ -133,34 +133,47 @@ class Streamer:
             raise RuntimeError(f"Error creating streaming response: {e}")
 
     async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
-    if not self.response:
-        raise RuntimeError("No response available for streaming")
+        if not self.response:
+            raise RuntimeError("No response available for streaming")
 
-    try:
-        self.parse_content_range()
+        try:
+            self.parse_content_range()
 
-        # --- UNIVERSAL MPEG-TS FIX ---
-        # Works for StreamWish, FileLions, TikTok Ads CDN, and others.
-        # Removes EVERYTHING before the first MPEG-TS sync byte 0x47.
-        def clean_ts(chunk: bytes) -> bytes:
-            sync = chunk.find(b"\x47")
-            if sync > 0:
-                return chunk[sync:]  # Strip garbage
-            return chunk
+            # --- UNIVERSAL MPEG-TS FIX ---
+            # Strip garbage until first sync byte (0x47)
+            def clean_ts(chunk: bytes) -> bytes:
+                sync = chunk.find(b"\x47")
+                if sync > 0:
+                    return chunk[sync:]
+                return chunk
 
-        first_chunk_processed = False
+            first_chunk_processed = False
 
-        if settings.enable_streaming_progress:
-            with tqdm_asyncio(
-                total=self.total_size,
-                initial=self.start_byte,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-                desc="Streaming",
-                ncols=100,
-                mininterval=1,
-            ) as self.progress_bar:
+            if settings.enable_streaming_progress:
+                with tqdm_asyncio(
+                    total=self.total_size,
+                    initial=self.start_byte,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc="Streaming",
+                    ncols=100,
+                    mininterval=1,
+                ) as self.progress_bar:
+
+                    async for chunk in self.response.aiter_bytes():
+
+                        # Clean only the first chunk
+                        if not first_chunk_processed:
+                            first_chunk_processed = True
+                            chunk = clean_ts(chunk)
+
+                        yield chunk
+                        size = len(chunk)
+                        self.bytes_transferred += size
+                        self.progress_bar.update(size)
+
+            else:
                 async for chunk in self.response.aiter_bytes():
 
                     if not first_chunk_processed:
@@ -168,22 +181,10 @@ class Streamer:
                         chunk = clean_ts(chunk)
 
                     yield chunk
-                    size = len(chunk)
-                    self.bytes_transferred += size
-                    self.progress_bar.update(size)
+                    self.bytes_transferred += len(chunk)
 
-        else:
-            async for chunk in self.response.aiter_bytes():
-
-                if not first_chunk_processed:
-                    first_chunk_processed = True
-                    chunk = clean_ts(chunk)
-
-                yield chunk
-                self.bytes_transferred += len(chunk)
-
-    except Exception:
-        raise
+        except Exception as e:
+           raise
 
 
 @staticmethod
