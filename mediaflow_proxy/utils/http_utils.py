@@ -170,8 +170,8 @@ class Streamer:
                                  # --- Ensure TS sync (0x47 0x40) ---
                                 if not chunk.startswith(TS_SYNC):
                                    sync = chunk.find(TS_SYNC)
-                                if sync != -1:
-                                chunk = chunk[sync:]
+                                       if sync != -1:
+                                        chunk = chunk[sync:]
 
                     # Stream cleaned chunk
                     yield chunk
