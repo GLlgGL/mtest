@@ -186,10 +186,10 @@ class Streamer:
                             while pos < len(chunk) and chunk[pos] in (0x00, 0xFF):
                                 pos += 1
                                 chunk = chunk[pos:]
-                                else:
-                                    first_chunk_processed = True
-                                    yield chunk
-                                    self.bytes_transferred += len(chunk)
+                        else:
+                                first_chunk_processed = True
+                                yield chunk
+                                self.bytes_transferred += len(chunk)
 
         except Exception as e:
             raise
