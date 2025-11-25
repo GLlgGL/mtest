@@ -29,37 +29,6 @@ class DownloadError(Exception):
         self.status_code = status_code
         self.message = message
         super().__init__(message)
-    # ---------------------------
-# Add this anywhere globally:
-# ---------------------------
-
-def strip_leading_png(data: bytes) -> bytes:
-    PNG_SIG = b"\x89PNG\r\n\x1a\n"
-
-    if not data.startswith(PNG_SIG):
-        return data
-
-    pos = len(PNG_SIG)
-    end = len(data)
-
-    while pos + 8 <= end:
-        chunk_len = int.from_bytes(data[pos:pos+4], "big")
-        chunk_type = data[pos+4:pos+8]
-        pos += 8 + chunk_len + 4
-
-        if chunk_type == b"IEND":
-            break
-    else:
-        return data
-
-    while pos < end and data[pos] in (0x00, 0xFF):
-        pos += 1
-
-    if pos < end and data[pos] == 0x47:
-        return data[pos:]
-
-    return data[pos:]
-
 
 
 def create_httpx_client(follow_redirects: bool = True, **kwargs) -> httpx.AsyncClient:
@@ -163,55 +132,54 @@ class Streamer:
             logger.error(f"Error creating streaming response: {e}")
             raise RuntimeError(f"Error creating streaming response: {e}")
 
-  async def create_streaming_response(self, url: str, headers: dict):
-        """
-        Creates and sends a streaming request.
+    async def stream_content(self) -> typing.AsyncGenerator[bytes, None]:
+        if not self.response:
+            raise RuntimeError("No response available for streaming")
 
-        Args:
-            url (str): The URL to stream from.
-            headers (dict): The headers to include in the request.
-
-        """
         try:
             self.parse_content_range()
+
+            # --- STREAMWISH FIX ---
+            FAKE_PNG_HEADER = b"\x89PNG\r\n\x1a\n"
             first_chunk_processed = False
 
-        if settings.enable_streaming_progress:
-            with tqdm_asyncio(
-                total=self.total_size,
-                initial=self.start_byte,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-                desc="Streaming",
-                ncols=100,
-                mininterval=1,
-            ) as self.progress_bar:
+            if settings.enable_streaming_progress:
+                with tqdm_asyncio(
+                    total=self.total_size,
+                    initial=self.start_byte,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc="Streaming",
+                    ncols=100,
+                    mininterval=1,
+                ) as self.progress_bar:
+                    async for chunk in self.response.aiter_bytes():
 
+                        # Remove StreamWish fake PNG header (only on first chunk)
+                        if not first_chunk_processed:
+                            first_chunk_processed = True
+                            if chunk.startswith(FAKE_PNG_HEADER):
+                                chunk = chunk[len(FAKE_PNG_HEADER):]
+
+                        yield chunk
+                        self.bytes_transferred += len(chunk)
+                        self.progress_bar.update(len(chunk))
+
+            else:
                 async for chunk in self.response.aiter_bytes():
 
-                    # ---- GLOBAL PNG STRIPPING FIX ----
+                    # *** STREAMWISH 8-BYTE HEADER CUT ***
                     if not first_chunk_processed:
                         first_chunk_processed = True
-                        chunk = strip_leading_png(chunk)
+                        if chunk.startswith(FAKE_PNG_HEADER):
+                            chunk = chunk[len(FAKE_PNG_HEADER):]
 
                     yield chunk
                     self.bytes_transferred += len(chunk)
-                    self.progress_bar.update(len(chunk))
 
-        else:
-            async for chunk in self.response.aiter_bytes():
-
-                # ---- GLOBAL PNG STRIPPING FIX ----
-                if not first_chunk_processed:
-                    first_chunk_processed = True
-                    chunk = strip_leading_png(chunk)
-
-                yield chunk
-                self.bytes_transferred += len(chunk)
-
-    except Exception as e:
-        raise
+        except Exception as e:
+            raise
             
     @staticmethod
     def format_bytes(size) -> str:
