@@ -20,6 +20,7 @@ from mediaflow_proxy.extractors.vidoza import VidozaExtractor
 from mediaflow_proxy.extractors.vixcloud import VixCloudExtractor
 from mediaflow_proxy.extractors.fastream import FastreamExtractor
 from mediaflow_proxy.extractors.voe import VoeExtractor
+from mediaflow_proxy.extractors.turbviplay import TurbViPlayExtractor
 from mediaflow_proxy.extractors.streamwish import StreamWishExtractor
 
 
