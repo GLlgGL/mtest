@@ -184,31 +184,27 @@ class Streamer:
                     self.bytes_transferred += len(chunk)
 
         except Exception as e:
-           raise
+            raise
+            
+    @staticmethod
+    def format_bytes(size) -> str:
+        power = 2**10
+        n = 0
+        units = {0: "B", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
+        while size > power:
+            size /= power
+            n += 1
+        return f"{size:.2f} {units[n]}"
 
-
-@staticmethod
-def format_bytes(size) -> str:
-    power = 2**10
-    n = 0
-    units = {0: "B", 1: "KB", 2: "MB", 3: "GB", 4: "TB"}
-    while size > power:
-        size /= power
-        n += 1
-    return f"{size:.2f} {units[n]}"
-
-
-def parse_content_range(self):
-    content_range = self.response.headers.get("Content-Range", "")
-    if content_range:
-        range_info = content_range.split()[-1]
-        self.start_byte, self.end_byte, self.total_size = map(
-            int, range_info.replace("/", "-").split("-")
-        )
-    else:
-        self.start_byte = 0
-        self.total_size = int(self.response.headers.get("Content-Length", 0))
-        self.end_byte = self.total_size - 1 if self.total_size > 0 else 0
+    def parse_content_range(self):
+        content_range = self.response.headers.get("Content-Range", "")
+        if content_range:
+            range_info = content_range.split()[-1]
+            self.start_byte, self.end_byte, self.total_size = map(int, range_info.replace("/", "-").split("-"))
+        else:
+            self.start_byte = 0
+            self.total_size = int(self.response.headers.get("Content-Length", 0))
+            self.end_byte = self.total_size - 1 if self.total_size > 0 else 0
 
     async def get_text(self, url: str, headers: dict):
         """
