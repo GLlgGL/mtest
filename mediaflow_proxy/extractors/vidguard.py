@@ -105,10 +105,7 @@ class VidGuardExtractor(BaseExtractor):
             stream_url = re.sub(r":/*", "://", stream_url)
 
         # Step 5: Decode VidGuard signature (?sig=xxxx)
-        try:
-            stream_url = self._decode_signature(stream_url)
-        except Exception:
-            raise ExtractorError("VIDGUARD: Failed to decode signature")
+        stream_url = self._decode_signature(stream_url)
 
         # -----------------------------------------------------
         #         RETURN MFP STRUCTURE (required format)
@@ -126,26 +123,50 @@ class VidGuardExtractor(BaseExtractor):
     #                SIGNATURE DECODING
     # -----------------------------------------------------
     def _decode_signature(self, url: str) -> str:
+        """
+        Supports both old hex signatures (original ResolveURL logic)
+        and new base64url-style signatures that VidGuard is using.
+        """
         if "sig=" not in url:
             return url
 
         sig = url.split("sig=")[1].split("&")[0]
 
-        decoded = ""
-        for v in binascii.unhexlify(sig):
-            # XOR by 2 — same as original resolver
-            decoded += chr((v if isinstance(v, int) else ord(v)) ^ 2)
+        # Detect hex signature (old format)
+        if re.fullmatch(r"[0-9a-fA-F]+", sig):
+            try:
+                raw = binascii.unhexlify(sig)
+            except binascii.Error:
+                raise ExtractorError("VIDGUARD: Failed hex unhexlify")
+        else:
+            # New VidGuard: base64url signature
+            try:
+                padded = sig + "=" * (-len(sig) % 4)
+                raw = base64.urlsafe_b64decode(padded)
+            except Exception:
+                raise ExtractorError("VIDGUARD: Signature is neither hex nor base64url")
 
-        # Remove padding / reverse bytes
-        decoded_bytes = decoded + "=="
-        decoded_final = self._b64decode(decoded_bytes)[:-5][::-1]
+        # XOR by 2 (same as original ResolveURL)
+        t = "".join(chr(b ^ 2) for b in raw)
+
+        # Inner base64 decode (ResolveURL: helpers.b64decode(t + '=='))
+        try:
+            decoded = self._b64decode(t + "==")
+        except Exception:
+            raise ExtractorError("VIDGUARD: Failed inner base64 decode in signature")
+
+        # decoded is bytes: drop last 5 bytes and reverse
+        decoded = decoded[:-5][::-1]
 
         # swap every 2 bytes
-        t = list(decoded_final)
-        for i in range(0, len(t) - 1, 2):
-            t[i], t[i + 1] = t[i + 1], t[i]
+        byte_list = list(decoded)
+        for i in range(0, len(byte_list) - 1, 2):
+            byte_list[i], byte_list[i + 1] = byte_list[i + 1], byte_list[i]
 
-        return url.replace(sig, "".join(t)[:-5])
+        # drop last 5 bytes again and turn into string
+        final = "".join(chr(b) for b in byte_list[:-5])
+
+        return url.replace(sig, final)
 
     # -----------------------------------------------------
     #                AA-DECODE (ResolveURL-style)
