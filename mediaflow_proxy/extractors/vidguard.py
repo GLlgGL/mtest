@@ -37,7 +37,19 @@ class VidGuardExtractor(BaseExtractor):
             raise ExtractorError("VIDGUARD: Invalid VidGuard domain")
 
         # Step 1: fetch the embed HTML
-        response = await self._make_request(url)
+        # Step 1: fetch the embed HTML
+        response = await self._make_request(
+            url,
+            headers={
+             "User-Agent": (
+                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                 "AppleWebKit/537.36 (KHTML, like Gecko) "
+                 "Chrome/120.0.0.0 Safari/537.36"
+             ),
+             "Referer": url,
+             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            }
+        )
         html = response.text
 
         # Step 2: VidGuard stores stream in AA-encoded JS inside:
