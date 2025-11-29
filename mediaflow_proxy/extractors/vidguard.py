@@ -139,36 +139,98 @@ class VidGuardExtractor(BaseExtractor):
     # -----------------------------------------------------
     #                AA-DECODE (Python rewrite)
     # -----------------------------------------------------
-    def _aadecode(self, js_text: str) -> str:
-        """
-        Minimal AA-decode implementation (no external module)
-        Adapted from resolveurl.lib.aadecode
-        """
-        # Convert "(![]+[])" style into numeric JS equivalent
-        replace_map = {
-            "(![]+[])[+[]]": "f",
-            "([]+[])[+[]]": "",
-        }
-        for k, v in replace_map.items():
-            js_text = js_text.replace(k, v)
+    def _aadecode(self, text):
+    # Strip whitespace and JS comments
+    text = re.sub(r"\s+|/\*.*?\*/", "", text)
 
-        # Remove JS junk and backslashes
-        js_text = js_text.replace("\\", "")
-        return js_text
+    # ALT patterns used by VidGuard
+    try:
+        data = text.split("+(ﾟɆﾟ)[ﾟoﾟ]")[1]
+        chars = data.split("+(ﾟɆﾟ)[ﾟεﾟ]+")[1:]
+        char1 = "ღ"
+        char2 = "(ﾟɆﾟ)[ﾟΘﾟ]"
+    except:
+        # Standard AAencode fallback
+        data = text.split("+(ﾟДﾟ)[ﾟoﾟ]")[1]
+        chars = data.split("+(ﾟДﾟ)[ﾟεﾟ]+")[1:]
+        char1 = "c"
+        char2 = "(ﾟДﾟ)['0']"
 
-    # -----------------------------------------------------
-    #                HELPERS
-    # -----------------------------------------------------
-    def _cleanup_js(self, text: str) -> str:
-        return (
-            text.replace("\\u002b", "+")
-                .replace("\\u0027", "'")
-                .replace("\\u0022", '"')
-                .replace("\\/", "/")
-                .replace("\\\\", "\\")
-                .replace('\\"', '"')
+    txt = ""
+    for char in chars:
+        char = (
+            char.replace("(oﾟｰﾟo)", "u")
+            .replace(char1, "0")
+            .replace(char2, "c")
+            .replace("ﾟΘﾟ", "1")
+            .replace("!+[]", "1")
+            .replace("-~", "1+")
+            .replace("o", "3")
+            .replace("_", "3")
+            .replace("ﾟｰﾟ", "4")
+            .replace("(+", "(")
         )
+        char = re.sub(r"\((\d)\)", r"\1", char)
 
-    def _b64decode(self, data: str) -> bytes:
-        import base64
-        return base64.b64decode(data)
+        c = ""
+        sub = ""
+        for v in char:
+            c += v
+            try:
+                sub += str(eval(c))
+                c = ""
+            except:
+                pass
+
+        if sub:
+            txt += sub + "|"
+
+    txt = txt[:-1].replace("+", "")
+
+    try:
+        txt_result = "".join([chr(int(n, 8)) for n in txt.split("|")])
+    except:
+        raise ExtractorError("VIDGUARD: Failed to decode AAencoded stream block")
+
+    return self._to_string_cases(txt_result)
+
+
+def _to_string_cases(self, txt):
+    sum_base = ""
+    m3 = False
+
+    if ".toString(" in txt:
+        if "+(" in txt:
+            m3 = True
+            try:
+                sum_base = "+" + re.search(
+                    r".toString...(\d+).", txt, re.DOTALL
+                ).groups(1)
+            except:
+                sum_base = ""
+            txt_pre_temp = re.findall(r"..(\d),(\d+).", txt, re.DOTALL)
+            txt_temp = [(n, b) for b, n in txt_pre_temp]
+        else:
+            txt_temp = re.findall(
+                r"(\d+)\.0.\w+.([^\)]+).", txt, re.DOTALL
+            )
+
+        for numero, base in txt_temp:
+            code = self._to_string(int(numero), eval(base + sum_base))
+            if m3:
+                txt = re.sub(
+                    r'"|\+', '', txt.replace("(" + base + "," + numero + ")", code)
+                )
+            else:
+                txt = re.sub(
+                    r"'|\+", '', txt.replace(numero + ".0.toString(" + base + ")", code)
+                )
+
+    return txt
+
+
+def _to_string(self, number, base):
+    chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+    if number < base:
+        return chars[number]
+    return self._to_string(number // base, base) + chars[number % base]
