@@ -1,8 +1,7 @@
 from typing import Annotated
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote
 import re
 import logging
-
 import httpx
 import time
 from collections import defaultdict
@@ -603,63 +602,52 @@ async def proxy_stream_endpoint(
     destination: str = Query(..., description="The URL of the stream.", alias="d"),
     filename: str | None = None,
 ):
-    # Sanitize destination URL to fix encoding issues
+    """
+    Proxify stream requests to the given video URL.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        proxy_headers (ProxyRequestHeaders): The headers to include in the request.
+        destination (str): The URL of the stream to be proxied.
+        filename (str | None): The filename to be used in the response headers.
+
+    Returns:
+        Response: The HTTP response with the streamed content.
+    """
+    # Sanitize destination URL to fix common encoding issues
     destination = sanitize_url(destination)
-
-    # ---------------------------------------------------------
-    # VIDOZA / MP4 ANTI-MULTI-REQUEST FIX (STREMIO COMPATIBLE)
-    # ---------------------------------------------------------
-        # ---------------------------------------------------------
-    # MP4 ANTI-MULTIPLE-REQUEST FIX (Stremio / WebPlayers)
-    # ---------------------------------------------------------
-    if destination.lower().endswith(".mp4"):
-        logger = logging.getLogger("mp4fix")
-        logger.warning(f"[MP4 FIX] Activated for {destination}")
-
-        # 1) Stop Stremio’s HEAD spam
-        if request.method == "HEAD":
-            return Response(
-                status_code=200,
-                headers={
-                    "Content-Length": "999999999",  # Fakes full length
-                    "Accept-Ranges": "bytes"
-                }
-            )
-
-        # 2) Enforce single-range GET request
-        proxy_headers.request.pop("range", None)
-        proxy_headers.request["Range"] = "bytes=0-"
-
-        # 3) Stop Stremio from sending range probes
-        proxy_headers.response["Accept-Ranges"] = "none"
-
-        # 4) Prevent HEAD re-check
-        proxy_headers.response["Cache-Control"] = "no-store"
-
-    # DLHD extract
+    
+    # Check if destination contains DLHD pattern and extract stream directly
     dlhd_result = await _check_and_extract_dlhd_stream(request, destination, proxy_headers)
     if dlhd_result:
+        # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
 
-    # Normal range handling
-    content_range = proxy_headers.request.get("range", "bytes=0-")
-    if "nan" in content_range.casefold():
-        raise HTTPException(status_code=416, detail="Invalid Range Header")
-    proxy_headers.request.update({"range": content_range})
+    if proxy_headers.request.get("range", "").strip() == "":
+        proxy_headers.request.pop("range", None)
 
-    # Filename handling
+    if proxy_headers.request.get("if-range", "").strip() == "":
+        proxy_headers.request.pop("if-range", None)
+    
+    if "range" not in proxy_headers.request:
+        proxy_headers.request["range"] = "bytes=0-"
+    
     if filename:
+        # If a filename is provided, set it in the headers using RFC 6266 format
         try:
+            # Try to encode with latin-1 first (simple case)
             filename.encode("latin-1")
             content_disposition = f'attachment; filename="{filename}"'
         except UnicodeEncodeError:
+            # For filenames with non-latin-1 characters, use RFC 6266 format with UTF-8
             encoded_filename = quote(filename.encode("utf-8"))
             content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
 
         proxy_headers.response.update({"content-disposition": content_disposition})
 
     return await proxy_stream(request.method, destination, proxy_headers)
+
 
 @proxy_router.get("/mpd/manifest.m3u8")
 async def mpd_manifest_proxy(
