@@ -623,7 +623,6 @@ async def proxy_stream_endpoint(
         # Update destination and headers with extracted stream data
         destination = dlhd_result["destination_url"]
         proxy_headers.request.update(dlhd_result.get("request_headers", {}))
-
     if proxy_headers.request.get("range", "").strip() == "":
         proxy_headers.request.pop("range", None)
 
