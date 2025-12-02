@@ -47,6 +47,8 @@ class VidGuardExtractor(BaseExtractor):
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
                 ),
                 "Referer": "https://listeamed.net/",
+                "X-Forwarded-For": client_ip,
+                "X-Real-IP": client_ip,
             },
         )
         html = response.text
