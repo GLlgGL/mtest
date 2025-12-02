@@ -8,18 +8,25 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class VidGuardExtractor(BaseExtractor):
-   
+    
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.mediaflow_endpoint = "hls_manifest_proxy"
+    mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
     #                   MAIN EXTRACTOR
     # -----------------------------------------------------
     async def extract(self, url: str):
         # Step 1: fetch the embed HTML with browser-like headers
-        response = await self._make_request(url)
+        response = await self._make_request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+                ),
+                "Referer": "https://listeamed.net/",
+                "Origin": "https://listeamed.net",
+            },
+        )
         html = response.text
 
         # Step 2: VidGuard stores stream in AA-encoded JS inside:
