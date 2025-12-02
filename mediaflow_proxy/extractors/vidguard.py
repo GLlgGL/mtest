@@ -91,6 +91,7 @@ class VidGuardExtractor(BaseExtractor):
             "destination_url": stream_url,
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
+            "force_playlist_proxy": True
         }
 
     # -----------------------------------------------------
