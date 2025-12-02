@@ -8,37 +8,14 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class VidGuardExtractor(BaseExtractor):
-    """
-    VidGuard extractor for MediaFlow Proxy
-    Compatible domains:
-        vidguard.to, vid-guard.com, vgfplay.com, vgfplay.xyz,
-        vgembed.com, vembed.net, embedv.net, v6embed.xyz,
-        go-streamer.net, fslinks.org, bembed.net, listeamed.net,
-        kinoger.pw, *.sbs
-    """
-
-    VALID_DOMAINS = [
-        "vidguard.to", "vid-guard.com", "vgfplay.com", "vgfplay.xyz",
-        "vgembed.com", "vembed.net", "embedv.net", "v6embed.xyz",
-        "fslinks.org", "go-streamer.net", "bembed.net", "listeamed.net",
-        "kinoger.pw", "moflix-stream.day",
-        "6tnutl8knw.sbs", "dhmu4p2hkp.sbs", "gsfjzmqu.sbs",
-    ]
-
-    mediaflow_endpoint = "hls_manifest_proxy"
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
     #                   MAIN EXTRACTOR
     # -----------------------------------------------------
     async def extract(self, url: str):
-        parsed_url = urlparse(url)
-
-        if not parsed_url.hostname:
-            raise ExtractorError("VIDGUARD: URL missing hostname")
-
-        if not any(parsed_url.hostname.endswith(d) for d in self.VALID_DOMAINS):
-            raise ExtractorError("VIDGUARD: Invalid VidGuard domain")
-
         # Step 1: fetch the embed HTML with browser-like headers
         response = await self._make_request(
             url,
