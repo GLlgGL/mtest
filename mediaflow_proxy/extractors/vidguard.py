@@ -28,10 +28,42 @@ class VidGuardExtractor(BaseExtractor):
     mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
+    #                 NORMALIZATION
+    # -----------------------------------------------------
+    def normalize(self, url: str) -> str:
+        """
+        Normalize VidGuard-style URLs to a clean embed form:
+
+        /e/ID
+        /e/ID/Some.File.mp4
+        /v/ID
+        /d/ID/anything
+        /embed/ID
+        /ID
+
+        → https://domain/e/ID
+        """
+        parsed = urlparse(url)
+        segments = [p for p in parsed.path.split("/") if p]
+
+        if not segments:
+            return url
+
+        first = segments[0]
+        if first in ("e", "v", "d", "embed") and len(segments) >= 2:
+            media_id = segments[1]
+        else:
+            media_id = segments[-1]
+
+        return f"{parsed.scheme}://{parsed.netloc}/e/{media_id}"
+
+    # -----------------------------------------------------
     #                   MAIN EXTRACTOR
     # -----------------------------------------------------
     async def extract(self, url: str):
-        parsed_url = urlparse(url)
+        # Always normalize to /e/<ID>
+        normalized_url = self.normalize(url)
+        parsed_url = urlparse(normalized_url)
 
         if not parsed_url.hostname:
             raise ExtractorError("VIDGUARD: URL missing hostname")
@@ -41,12 +73,14 @@ class VidGuardExtractor(BaseExtractor):
 
         # Step 1: fetch the embed HTML with browser-like headers
         response = await self._make_request(
-            url,
+            normalized_url,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
+                    "Gecko/20100101 Firefox/140.0"
                 ),
-                "Referer": "https://listeamed.net/",
+                # VidGuard expects root domain as referer, like the browser does
+                "Referer": f"{parsed_url.scheme}://{parsed_url.netloc}/",
             },
         )
         html = response.text
@@ -108,7 +142,13 @@ class VidGuardExtractor(BaseExtractor):
         #         RETURN MFP STRUCTURE (required format)
         # -----------------------------------------------------
         headers = self.base_headers.copy()
-        headers["referer"] = url
+        # These are the headers MediaFlow will use when proxying the HLS
+        headers["referer"] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+        headers["origin"] = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        headers["user-agent"] = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
+            "Gecko/20100101 Firefox/140.0"
+        )
 
         return {
             "destination_url": stream_url,
