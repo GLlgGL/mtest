@@ -10,7 +10,9 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 class VidGuardExtractor(BaseExtractor):
    
 
-    mediaflow_endpoint = "hls_manifest_proxy"
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
     #                   MAIN EXTRACTOR
@@ -91,7 +93,6 @@ class VidGuardExtractor(BaseExtractor):
             "destination_url": stream_url,
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
-            "force_playlist_proxy": True
         }
 
     # -----------------------------------------------------
