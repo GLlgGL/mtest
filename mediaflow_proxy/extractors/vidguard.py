@@ -78,11 +78,12 @@ class VidGuardExtractor(BaseExtractor):
         # -----------------------------------------------------
         #         RETURN MFP STRUCTURE (required format)
         # -----------------------------------------------------
-        self.base_headers["referer"] = url
+        headers["referer"] = "https://listeamed.net/"
+        headers["origin"] = "https://listeamed.net"
 
         return {
             "destination_url": stream_url,
-            "request_headers": self.base_headers,
+            "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
         }
 
