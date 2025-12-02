@@ -36,10 +36,41 @@ class VidGuardExtractor(BaseExtractor):
         if not parsed_url.hostname:
             raise ExtractorError("VIDGUARD: URL missing hostname")
 
+        # -----------------------------------------------------
+        # STEP 0 — If NOT a VidGuard domain, extract iframe first
+        # -----------------------------------------------------
         if not any(parsed_url.hostname.endswith(d) for d in self.VALID_DOMAINS):
-            raise ExtractorError("VIDGUARD: Invalid VidGuard domain")
+            resp = await self._make_request(
+                url,
+                headers={"User-Agent": self.base_headers["user-agent"]}
+            )
+            html = resp.text
 
-        # Step 1: fetch the embed HTML with browser-like headers
+            domain_pattern = "(?:" + "|".join(
+                d.replace(".", r"\.") for d in self.VALID_DOMAINS
+            ) + ")"
+
+            iframe = re.search(
+                rf'<iframe[^>]+src=["\']([^"\']*{domain_pattern}[^"\']*)["\']',
+                html,
+                re.IGNORECASE
+            )
+
+            if not iframe:
+                raise ExtractorError("VIDGUARD: No VidGuard iframe found in page")
+
+            embed_url = iframe.group(1)
+
+            # remove trailing MP4 filename
+            if embed_url.endswith(".mp4"):
+                embed_url = embed_url.rsplit("/", 1)[0]
+
+            # retry extraction with real VidGuard link
+            return await self.extract(embed_url)
+
+        # -----------------------------------------------------
+        # STEP 1 — Load VidGuard embed page
+        # -----------------------------------------------------
         response = await self._make_request(
             url,
             headers={
@@ -51,11 +82,13 @@ class VidGuardExtractor(BaseExtractor):
         )
         html = response.text
 
-        # Step 2: VidGuard stores stream in AA-encoded JS inside:
-        # eval("window.ADBLOCKER=false;\n .... ;");
+        # -----------------------------------------------------
+        # STEP 2 — Find AA-encoded JS block
+        # -----------------------------------------------------
         js_match = re.search(
             r'eval\("window\.ADBLOCKER\s*=\s*false;\\n(.+?);"\);</script',
             html,
+            re.DOTALL
         )
 
         if not js_match:
@@ -63,10 +96,12 @@ class VidGuardExtractor(BaseExtractor):
 
         encoded_js = self._cleanup_js(js_match.group(1))
 
-        # Step 3: decode AA encoded JavaScript
+        # -----------------------------------------------------
+        # STEP 3 — Decode AAencoded JS
+        # -----------------------------------------------------
         decoded = self._aadecode(encoded_js)
 
-        # VidGuard JSON begins at offset 11 in the decoded string
+        # VidGuard JSON begins at offset 11 in decoded string
         try:
             json_data = json.loads(decoded[11:])
         except Exception:
@@ -76,13 +111,14 @@ class VidGuardExtractor(BaseExtractor):
         if not streams:
             raise ExtractorError("VIDGUARD: No stream source found")
 
-        # Step 4: Pick best quality if list
+        # -----------------------------------------------------
+        # STEP 4 — Choose best quality
+        # -----------------------------------------------------
         if isinstance(streams, list):
-            # Each entry = {"Label": "1080p", "URL": "https...."}
             def _label_to_int(label: str) -> int:
                 try:
                     return int(label.replace("p", ""))
-                except Exception:
+                except:
                     return 0
 
             streams_sorted = sorted(
@@ -97,15 +133,17 @@ class VidGuardExtractor(BaseExtractor):
         if not stream_url:
             raise ExtractorError("VIDGUARD: Empty stream URL")
 
-        # Fix malformed protocol `:////` etc
+        # fix malformed protocol (:// → :////)
         if not stream_url.startswith("http"):
             stream_url = re.sub(r":/*", "://", stream_url)
 
-        # Step 5: Decode VidGuard signature (?sig=xxxx)
+        # -----------------------------------------------------
+        # STEP 5 — Decode ?sig= parameter
+        # -----------------------------------------------------
         stream_url = self._decode_signature(stream_url)
 
         # -----------------------------------------------------
-        #         RETURN MFP STRUCTURE (required format)
+        # OUTPUT TO MEDIAFLOW
         # -----------------------------------------------------
         headers = self.base_headers.copy()
         headers["referer"] = url
@@ -120,76 +158,57 @@ class VidGuardExtractor(BaseExtractor):
     #                SIGNATURE DECODING
     # -----------------------------------------------------
     def _decode_signature(self, url: str) -> str:
-        """
-        Supports both old hex signatures (original ResolveURL logic)
-        and new base64url-style signatures that VidGuard is using.
-        """
         if "sig=" not in url:
             return url
 
         sig = url.split("sig=")[1].split("&")[0]
 
-        # Detect hex signature (old format)
-        if re.fullmatch(r"[0-9a-fA-F]+", sig):
+        if re.fullmatch(r"[0-9a-fA-F]+", sig):   # old hex format
             try:
                 raw = binascii.unhexlify(sig)
-            except binascii.Error:
+            except:
                 raise ExtractorError("VIDGUARD: Failed hex unhexlify")
-        else:
-            # New VidGuard: base64url signature
+        else:  # new base64url format
             try:
                 padded = sig + "=" * (-len(sig) % 4)
                 raw = base64.urlsafe_b64decode(padded)
-            except Exception:
+            except:
                 raise ExtractorError("VIDGUARD: Signature is neither hex nor base64url")
 
-        # XOR by 2 (same as original ResolveURL)
         t = "".join(chr(b ^ 2) for b in raw)
 
-        # Inner base64 decode (ResolveURL: helpers.b64decode(t + '=='))
         try:
             decoded = self._b64decode(t + "==")
-        except Exception:
-            raise ExtractorError("VIDGUARD: Failed inner base64 decode in signature")
+        except:
+            raise ExtractorError("VIDGUARD: Failed inner base64 decode")
 
-        # decoded is bytes: drop last 5 bytes and reverse
         decoded = decoded[:-5][::-1]
 
-        # swap every 2 bytes
         byte_list = list(decoded)
         for i in range(0, len(byte_list) - 1, 2):
             byte_list[i], byte_list[i + 1] = byte_list[i + 1], byte_list[i]
 
-        # drop last 5 bytes again and turn into string
         final = "".join(chr(b) for b in byte_list[:-5])
-
         return url.replace(sig, final)
 
     # -----------------------------------------------------
-    #                AA-DECODE (ResolveURL-style)
+    #                AA-DECODE
     # -----------------------------------------------------
     def _aadecode(self, text: str) -> str:
-        """
-        AAdecode implementation adapted from resolveurl/lib/aadecode.py
-        with support for the alt pattern (ﾟɆﾟ) used by VidGuard.
-        """
-        # Strip whitespace and JS comments
         text = re.sub(r"\s+|/\*.*?\*/", "", text)
 
-        # Try ALT pattern used by VidGuard first
         try:
             data = text.split("+(ﾟɆﾟ)[ﾟoﾟ]")[1]
             chars = data.split("+(ﾟɆﾟ)[ﾟεﾟ]+")[1:]
             char1 = "ღ"
             char2 = "(ﾟɆﾟ)[ﾟΘﾟ]"
-        except Exception:
-            # Fallback to standard AAencode pattern
+        except:
             try:
                 data = text.split("+(ﾟДﾟ)[ﾟoﾟ]")[1]
                 chars = data.split("+(ﾟДﾟ)[ﾟεﾟ]+")[1:]
                 char1 = "c"
                 char2 = "(ﾟДﾟ)['0']"
-            except Exception:
+            except:
                 raise ExtractorError("VIDGUARD: AAencode patterns not found")
 
         txt = ""
@@ -215,30 +234,25 @@ class VidGuardExtractor(BaseExtractor):
                 try:
                     sub += str(eval(c))
                     c = ""
-                except Exception:
-                    # not yet a valid expression, keep accumulating
+                except:
                     pass
 
             if sub:
                 txt += sub + "|"
 
         if not txt:
-            raise ExtractorError("VIDGUARD: Failed building AAdecode numeric string")
+            raise ExtractorError("VIDGUARD: AAdecode number build failed")
 
         txt = txt[:-1].replace("+", "")
 
         try:
             txt_result = "".join(chr(int(n, 8)) for n in txt.split("|"))
-        except Exception:
-            raise ExtractorError("VIDGUARD: Failed to decode AAencoded octal data")
+        except:
+            raise ExtractorError("VIDGUARD: Octal decode failed")
 
         return self._to_string_cases(txt_result)
 
     def _to_string_cases(self, txt: str) -> str:
-        """
-        Handle .toString(base) patterns inside AAdecoded text
-        (ported from resolveurl aadecode.toStringCases)
-        """
         sum_base = ""
         m3 = False
 
@@ -249,10 +263,10 @@ class VidGuardExtractor(BaseExtractor):
                     sum_base = "+" + re.search(
                         r".toString...(\d+).", txt, re.DOTALL
                     ).groups(1)
-                except Exception:
+                except:
                     sum_base = ""
-                txt_pre_temp = re.findall(r"..(\d),(\d+).", txt, re.DOTALL)
-                txt_temp = [(n, b) for b, n in txt_pre_temp]
+                txt_pre = re.findall(r"..(\d),(\d+).", txt, re.DOTALL)
+                txt_temp = [(n, b) for b, n in txt_pre]
             else:
                 txt_temp = re.findall(
                     r"(\d+)\.0.\w+.([^\)]+).", txt, re.DOTALL
@@ -261,17 +275,9 @@ class VidGuardExtractor(BaseExtractor):
             for numero, base in txt_temp:
                 code = self._to_string(int(numero), eval(base + sum_base))
                 if m3:
-                    txt = re.sub(
-                        r'"|\+',
-                        "",
-                        txt.replace("(" + base + "," + numero + ")", code),
-                    )
+                    txt = re.sub(r'"|\+', "", txt.replace("(" + base + "," + numero + ")", code))
                 else:
-                    txt = re.sub(
-                        r"'|\+",
-                        "",
-                        txt.replace(f"{numero}.0.toString({base})", code),
-                    )
+                    txt = re.sub(r"'|\+", "", txt.replace(f"{numero}.0.toString({base})", code))
 
         return txt
 
