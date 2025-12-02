@@ -8,9 +8,9 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 
 
 class VidGuardExtractor(BaseExtractor):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.mediaflow_endpoint = "hls_manifest_proxy"
+   
+
+    mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
     #                   MAIN EXTRACTOR
