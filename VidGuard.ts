@@ -19,14 +19,30 @@ export class VidGuard extends Extractor {
     '6tnutl8knw.sbs', 'dhmu4p2hkp.sbs', 'gsfjzmqu.sbs'
   ];
 
+  // domains that must be forced to listeamed.net (same as Python)
+  private forceToListeamed = [
+    'vidguard', 'vid-guard', 'vgfplay.com', 'vgembed',
+    'vembed.net', 'embedv.net', 'go-streamer.net'
+  ];
+
   public supports(ctx: Context, url: URL): boolean {
     return this.domains.some(d => url.host.includes(d)) && supportsMediaFlowProxy(ctx);
   }
 
-  // Convert /v/{id}, /d/{id}, /e/{id} → /e/{id}
-  public override normalize(url: URL): URL {
-    const parts = url.pathname.split('/').filter(Boolean);
+  // 🔥 Force all supported hosts to listeamed.net before normalizing
+  private forceHost(url: URL): URL {
+    const host = url.host;
+    if (this.forceToListeamed.some(x => host.includes(x))) {
+      return new URL(url.toString().replace(host, "listeamed.net"));
+    }
+    return url;
+  }
 
+  // Convert /v/{id}, /d/{id}, /e/{id} → /e/{id} and force the domain
+  public override normalize(url: URL): URL {
+    url = this.forceHost(url);
+
+    const parts = url.pathname.split('/').filter(Boolean);
     const first = parts[0];
 
     if (parts.length >= 2 && first && ['e', 'v', 'd'].includes(first)) {
@@ -45,20 +61,15 @@ export class VidGuard extends Extractor {
     meta: Meta
   ): Promise<UrlResult[]> {
 
-    // Prefer meta.referer → else fallback to listreamed root
-    const referer =
-      meta.referer ??
-      "https://listeamed.net/";
+    const referer = meta.referer ?? "https://listeamed.net/";
 
     const headers: Record<string, string> = {
-      // MUST be lowercase for MediaFlow
       referer: referer,
       origin: "https://listeamed.net",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
     };
 
-    // Send to MediaFlow Proxy EXACTLY as VidGuard expects
     const proxiedUrl = await buildMediaFlowProxyExtractorStreamUrl(
       ctx,
       this.fetcher,
