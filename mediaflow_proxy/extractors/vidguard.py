@@ -78,6 +78,7 @@ class VidGuardExtractor(BaseExtractor):
         # -----------------------------------------------------
         #         RETURN MFP STRUCTURE (required format)
         # -----------------------------------------------------
+        headers = self.base_headers.copy()
         headers["referer"] = "https://listeamed.net/"
         headers["origin"] = "https://listeamed.net"
 
