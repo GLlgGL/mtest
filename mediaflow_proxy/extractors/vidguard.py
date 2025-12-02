@@ -10,7 +10,7 @@ from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
 class VidGuardExtractor(BaseExtractor):
    
 
-    mediaflow_endpoint = "hls_segment_proxy"
+    mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
     #                   MAIN EXTRACTOR
