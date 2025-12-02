@@ -25,7 +25,7 @@ class VidGuardExtractor(BaseExtractor):
         "6tnutl8knw.sbs", "dhmu4p2hkp.sbs", "gsfjzmqu.sbs",
     ]
 
-    mediaflow_endpoint = "hls_manifest_proxy"
+    #mediaflow_endpoint = "hls_manifest_proxy"
 
     # -----------------------------------------------------
     #                   MAIN EXTRACTOR
