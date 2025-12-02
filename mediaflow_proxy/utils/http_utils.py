@@ -497,53 +497,34 @@ class ProxyRequestHeaders:
 def get_proxy_headers(request: Request) -> ProxyRequestHeaders:
     """
     Extracts proxy headers from the request query parameters.
+
+    Args:
+        request (Request): The incoming HTTP request.
+
+    Returns:
+        ProxyRequest: A named tuple containing the request headers and response headers.
     """
+    request_headers = {k: v for k, v in request.headers.items() if k in SUPPORTED_REQUEST_HEADERS}
+    request_headers.update({k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("h_")})
 
-    # Start with allowed forwarded headers
-    request_headers = {
-        k: v for k, v in request.headers.items()
-        if k in SUPPORTED_REQUEST_HEADERS
-    }
-
-    # Convert h_* query params into request headers
-    for k, v in request.query_params.items():
-        if not k.startswith("h_"):
-            continue
-
-        header = k[2:]            # remove "h_"
-        header = header.replace("_", "-")  # allow h_x_real_ip → X-Real-Ip
-
-        # FIX: normalize correct casing for IP headers
-        if header.lower() == "x-real-ip":
-            header = "X-Real-IP"
-        elif header.lower() == "x-forwarded-for":
-            header = "X-Forwarded-For"
-        elif header.lower() == "forwarded":
-            header = "Forwarded"
-
-        request_headers[header] = v
-
-    # Fix referrer
+    # Handle common misspelling of referer
     if "referrer" in request_headers:
         if "referer" not in request_headers:
             request_headers["referer"] = request_headers.pop("referrer")
-
-    # Special cleanup for vidoza
+            
     dest = request.query_params.get("d", "")
     host = urlparse(dest).netloc.lower()
-
+            
     if "vidoza" in host or "videzz" in host:
+        # Remove ALL empty headers
         for h in list(request_headers.keys()):
-            if not request_headers[h] or not request_headers[h].strip():
+            v = request_headers[h]
+            if v is None or v.strip() == "":
                 request_headers.pop(h, None)
 
-    # Response headers
-    response_headers = {
-        k[2:].lower(): v for k, v in request.query_params.items()
-        if k.startswith("r_")
-    }
-
+    response_headers = {k[2:].lower(): v for k, v in request.query_params.items() if k.startswith("r_")}
     return ProxyRequestHeaders(request_headers, response_headers)
+
 
 class EnhancedStreamingResponse(Response):
     body_iterator: typing.AsyncIterable[typing.Any]
