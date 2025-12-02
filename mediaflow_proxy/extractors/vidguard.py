@@ -31,7 +31,7 @@ class VidGuardExtractor(BaseExtractor):
         # Step 2: VidGuard stores stream in AA-encoded JS inside:
         # eval("window.ADBLOCKER=false;\n .... ;");
         js_match = re.search(
-            r'eval\("window\.ADBLOCKER\s*=\s*false;\\n(.+?);"\);</script',
+            r'eval\("window\.ADBLOCKER\s*=\s*false;[\s\S]*?(.+?);"\);\s*</script',
             html,
         )
 
