@@ -263,6 +263,20 @@ def parse_representation(
     else:
         profile["segment_template_start_number"] = 1
 
+    # VK BaseURL-only MPD (no SegmentTemplate)
+    base_url = representation.get("BaseURL") or adaptation.get("BaseURL")
+    if base_url:
+        full_url = urljoin(source + "/", base_url)
+
+        profile["initUrl"] = full_url
+        profile["segments"] = [{
+        "type": "segment",
+        "media": full_url,
+        "number": 1,
+        "extinf": 0
+    }]
+    return profile
+
     if parse_segment_profile_id is None or profile["id"] != parse_segment_profile_id:
         return profile
 
