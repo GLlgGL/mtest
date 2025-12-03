@@ -1,3 +1,9 @@
+import json
+import re
+from typing import Dict, Any
+
+from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
+
 class VKExtractor(BaseExtractor):
     mediaflow_endpoint = "mpd_manifest_proxy"
 
