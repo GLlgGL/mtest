@@ -1,8 +1,10 @@
 import json
 import re
+from urllib.parse import urljoin
 from typing import Dict, Any
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
+
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -11,13 +13,12 @@ UA = (
 
 
 class VKExtractor(BaseExtractor):
-    # IMPORTANT: VK now uses DASH MPD, not HLS!
+    # IMPORTANT: VK uses DASH, not HLS
     mediaflow_endpoint = "mpd_manifest_proxy"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
 
-        # Step 1 — VK AJAX internal API call
         ajax_url = self._build_ajax_url(embed_url)
 
         headers = {
@@ -46,26 +47,33 @@ class VKExtractor(BaseExtractor):
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        stream = self._extract_stream(json_data)
-        if not stream:
-            raise ExtractorError("VK: no playable HLS/MPD stream found")
+        # extract REAL DASH manifest URL
+        mpd_url = self._extract_mpd(json_data)
+        if not mpd_url:
+            raise ExtractorError("VK: no DASH/MPD manifest found")
+
+        # absolute URL (VK sometimes returns relative paths)
+        if mpd_url.startswith("/"):
+            mpd_url = urljoin(embed_url, mpd_url)
 
         return {
-            "destination_url": stream,
+            "destination_url": mpd_url,
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
         }
 
-    # --------------------------------------------------------------
-    # HELPERS
-    # --------------------------------------------------------------
+    # ============================================================
+    # Helpers
+    # ============================================================
 
     def _normalize(self, url: str) -> str:
-        """Normalize into /video_ext.php?oid=X&id=Y format."""
+        """
+        Normalize any VK URL into the /video_ext.php URL format.
+        """
         if "video_ext.php" in url:
             return url
 
-        m = re.search(r"video(\-?\d+)_(\d+)", url)
+        m = re.search(r"video(\d+)_(\d+)", url)
         if not m:
             return url
 
@@ -78,16 +86,21 @@ class VKExtractor(BaseExtractor):
 
     def _build_ajax_data(self, embed_url: str) -> Dict[str, str]:
         qs = re.search(r"\?(.*)", embed_url)
-        parts = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
-
+        parts = (
+            dict(x.split("=") for x in qs.group(1).split("&"))
+            if qs else {}
+        )
         return {
             "act": "show",
             "al": "1",
             "video": f"{parts.get('oid')}_{parts.get('id')}",
         }
 
-    def _extract_stream(self, json_data: Any) -> str:
-        """Extract DASH (preferred) or fallback HLS."""
+    def _extract_mpd(self, json_data: Any) -> str | None:
+        """
+        Extract REAL MPD URL instead of fake HLS.
+        """
+
         payload = []
         for item in json_data.get("payload", []):
             if isinstance(item, list):
@@ -101,8 +114,11 @@ class VKExtractor(BaseExtractor):
         if not params:
             return None
 
-        # Prefer DASH MPD first
-        if params.get("dash"):
-            return params["dash"]
-
-        # Fallback to HLS links
+        # VK REAL STREAMING URL (MPD)
+        return (
+            params.get("dash") or
+            params.get("dash_ondemand") or
+            params.get("mpd") or
+            params.get("manifest") or
+            params.get("url240")  # fallback (MPD disguised)
+        )
