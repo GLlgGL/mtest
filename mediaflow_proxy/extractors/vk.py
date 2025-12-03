@@ -3,6 +3,7 @@ import re
 from typing import Dict, Any
 
 from mediaflow_proxy.extractors.base import BaseExtractor, ExtractorError
+import httpx
 
 
 UA = (
@@ -12,12 +13,12 @@ UA = (
 
 
 class VKExtractor(BaseExtractor):
+    # always use DASH handler
     mediaflow_endpoint = "mpd_manifest_proxy"
 
     async def extract(self, url: str, **kwargs) -> Dict[str, Any]:
         embed_url = self._normalize(url)
 
-        # STEP 1 — call al_video.php (VK API)
         ajax_url = self._build_ajax_url(embed_url)
 
         headers = {
@@ -34,7 +35,7 @@ class VKExtractor(BaseExtractor):
             ajax_url,
             method="POST",
             data=data,
-            headers=headers
+            headers=headers,
         )
 
         text = response.text
@@ -46,33 +47,28 @@ class VKExtractor(BaseExtractor):
         except:
             raise ExtractorError("VK: invalid JSON payload")
 
-        stream = self._extract_stream(json_data)
-        if not stream:
-            raise ExtractorError("VK: no playable HLS URL found")
-
-        playlist_url = stream
+        stream_url = await self._extract_stream(json_data)
+        if not stream_url:
+            raise ExtractorError("VK: no playable stream URL found")
 
         return {
-            "destination_url": playlist_url,
+            "destination_url": stream_url,
             "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
         }
 
-    # -------------------------------
-    # HELPERS
-    # -------------------------------
+    # ---------- HELPERS ----------
 
     def _normalize(self, url: str) -> str:
-        """Normalize all VK URLs into /video_ext.php style."""
         if "video_ext.php" in url:
             return url
 
         m = re.search(r"video(\d+)_(\d+)", url)
-        if not m:
-            return url
+        if m:
+            oid, vid = m.groups()
+            return f"https://vk.com/video_ext.php?oid={oid}&id={vid}"
 
-        oid, vid = m.group(1), m.group(2)
-        return f"https://vk.com/video_ext.php?oid={oid}&id={vid}"
+        return url
 
     def _build_ajax_url(self, embed_url: str) -> str:
         host = re.search(r"https?://([^/]+)", embed_url).group(1)
@@ -80,38 +76,56 @@ class VKExtractor(BaseExtractor):
 
     def _build_ajax_data(self, embed_url: str) -> Dict[str, str]:
         qs = re.search(r"\?(.*)", embed_url)
-        parts = (
-            dict(x.split("=") for x in qs.group(1).split("&"))
-            if qs
-            else {}
-        )
+        params = dict(x.split("=") for x in qs.group(1).split("&")) if qs else {}
 
         return {
             "act": "show",
             "al": "1",
-            "video": f"{parts.get('oid')}_{parts.get('id')}",
+            "video": f"{params.get('oid')}_{params.get('id')}",
         }
 
-    def _extract_stream(self, json_data: Any) -> str:
-        payload = []
-        for item in json_data.get("payload", []):
-            if isinstance(item, list):
-                payload = item
+    async def _extract_stream(self, json_data: Any) -> str:
+        payload = next(
+            (item for item in json_data.get("payload", []) if isinstance(item, list)),
+            []
+        )
 
         params = None
         for item in payload:
             if isinstance(item, dict) and item.get("player"):
                 params = item["player"]["params"][0]
+                break
 
         if not params:
             return None
 
-        # HLS preferred
-        return (
+        # Possible HLS source
+        hls_url = (
             params.get("hls")
             or params.get("hls_ondemand")
             or params.get("hls_live")
-            or params.get("url1080")
+        )
+
+        # try HLS first — but validate!
+        if hls_url:
+            async with httpx.AsyncClient() as client:
+                head = await client.get(hls_url, timeout=10)
+
+            # If XML → DASH (MPD)
+            if head.text.lstrip().startswith("<MPD"):
+                return hls_url
+
+            # real HLS
+            return hls_url
+
+        # fallback to MPD/dash
+        dash = params.get("dash") or params.get("dash_ondemand")
+        if dash:
+            return dash
+
+        # fallback MP4 qualities
+        return (
+            params.get("url1080")
             or params.get("url720")
             or params.get("url480")
             or params.get("url360")
