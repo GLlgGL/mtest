@@ -197,6 +197,51 @@ class M3U8Processor:
             line = line.replace(f'URI="{original_uri}"', f'URI="{new_uri}"')
         return line
 
+    async def proxy_content_url(self, url: str, base_url: str) -> str:
+    """
+    Proxies a content URL based on configured routing strategy.
+    FIXED VERSION WITH VK RELATIVE PATH HANDLING.
+    """
+    # Resolve relative URLs (VK uses "/expires/..." paths)
+    full_url = parse.urljoin(base_url, url)
+
+    # Detect VK-style segments that end with "/video/" or embed inside query
+    if url.startswith("/expires/") or url.startswith("/videos/") or "seg-" in url:
+        # Force MediaFlow proxy for ALL VK segments
+        return await self.proxy_url(full_url, base_url, use_full_url=True)
+
+    # If no_proxy is enabled, return the direct URL
+    if self.no_proxy:
+        return full_url
+
+    # If key_only_proxy, skip proxying for segment URLs
+    if self.key_only_proxy and not url.endswith((".m3u", ".m3u8")):
+        return full_url
+
+    # Detect playlist URLs (actual m3u references)
+    parsed = parse.urlparse(full_url)
+    if parsed.path.endswith((".m3u", ".m3u8", ".m3u_plus")):
+        return await self.proxy_url(full_url, base_url, use_full_url=True)
+
+    # Routing: direct / stremio / mediaflow
+    strategy = settings.m3u8_content_routing
+
+    if strategy == "direct":
+        return full_url
+
+    if strategy == "stremio" and settings.stremio_proxy_url:
+        query_params = dict(self.request.query_params)
+        req_headers = {k[2:]: v for k, v in query_params.items() if k.startswith("h_")}
+        res_headers = {k[2:]: v for k, v in query_params.items() if k.startswith("r_")}
+        return encode_stremio_proxy_url(
+            settings.stremio_proxy_url,
+            full_url,
+            request_headers=req_headers or None,
+            response_headers=res_headers or None,
+        )
+
+    # Default → MediaFlow proxy
+    return await self.proxy_url(full_url, base_url, use_full_url=True)
 
     async def proxy_url(self, url: str, base_url: str, use_full_url: bool = False) -> str:
         """
