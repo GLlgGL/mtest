@@ -106,12 +106,3 @@ class VKExtractor(BaseExtractor):
             return params["dash"]
 
         # Fallback to HLS links
-        return (
-            params.get("hls")
-            or params.get("hls_ondemand")
-            or params.get("hls_live")
-            or params.get("url1080")
-            or params.get("url720")
-            or params.get("url480")
-            or params.get("url360")
-        )
