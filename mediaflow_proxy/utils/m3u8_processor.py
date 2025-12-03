@@ -198,32 +198,43 @@ class M3U8Processor:
         return line
 
     async def proxy_content_url(self, url: str, base_url: str) -> str:
-    """
-    Proxies a content URL based on configured routing strategy.
-    FIXED VERSION WITH VK RELATIVE PATH HANDLING.
-    """
-    # Resolve relative URLs (VK uses "/expires/..." paths)
+        """
+        Proxies a content URL based on the configured routing strategy.
+        FIXED VERSION WITH VK RELATIVE PATH HANDLING.
+        """
+
+        # Resolve relative URLs (VK uses paths like "/expires/.../")
         full_url = parse.urljoin(base_url, url)
 
-    # Detect VK-style segments that end with "/video/" or embed inside query
-        if url.startswith("/expires/") or url.startswith("/videos/") or "seg-" in url:
-        # Force MediaFlow proxy for ALL VK segments
+        # VK-style segment detection
+        if (
+            url.startswith("/expires/")
+            or url.startswith("/videos/")
+            or "seg-" in url        # many VK playlists embed segments inside query params
+            or url.endswith(".ts")  # strict fallback protection
+        ):
+            # Force MediaFlow proxy for all VK segments
             return await self.proxy_url(full_url, base_url, use_full_url=True)
 
-    # If no_proxy is enabled, return the direct URL
+        # If no_proxy, return direct URL
         if self.no_proxy:
             return full_url
 
-    # If key_only_proxy, skip proxying for segment URLs
+        # If only proxying keys, leave segment URLs direct
         if self.key_only_proxy and not url.endswith((".m3u", ".m3u8")):
             return full_url
 
-    # Detect playlist URLs (actual m3u references)
+        # Detect playlist URLs
         parsed = parse.urlparse(full_url)
-        if parsed.path.endswith((".m3u", ".m3u8", ".m3u_plus")):
+        is_playlist = (
+            parsed.path.endswith((".m3u", ".m3u8", ".m3u_plus")) or
+            parse.parse_qs(parsed.query).get("type", [""])[0] in ["m3u", "m3u8", "m3u_plus"]
+        )
+
+        if is_playlist:
             return await self.proxy_url(full_url, base_url, use_full_url=True)
 
-    # Routing: direct / stremio / mediaflow
+        # === ROUTING STRATEGY ===
         strategy = settings.m3u8_content_routing
 
         if strategy == "direct":
@@ -231,17 +242,19 @@ class M3U8Processor:
 
         if strategy == "stremio" and settings.stremio_proxy_url:
             query_params = dict(self.request.query_params)
-            req_headers = {k[2:]: v for k, v in query_params.items() if k.startswith("h_")}
-            res_headers = {k[2:]: v for k, v in query_params.items() if k.startswith("r_")}
+
+            request_headers = {k[2:]: v for k, v in query_params.items() if k.startswith("h_")}
+            response_headers = {k[2:]: v for k, v in query_params.items() if k.startswith("r_")}
+
             return encode_stremio_proxy_url(
                 settings.stremio_proxy_url,
                 full_url,
-                request_headers=req_headers or None,
-                response_headers=res_headers or None,
-        )
+                request_headers=request_headers if request_headers else None,
+                response_headers=response_headers if response_headers else None,
+            )
 
-    # Default → MediaFlow proxy
-    return await self.proxy_url(full_url, base_url, use_full_url=True)
+        # Default → MediaFlow proxy
+        return await self.proxy_url(full_url, base_url, use_full_url=True)
 
     async def proxy_url(self, url: str, base_url: str, use_full_url: bool = False) -> str:
         """
