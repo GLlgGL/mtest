@@ -23,6 +23,7 @@ from mediaflow_proxy.extractors.fastream import FastreamExtractor
 from mediaflow_proxy.extractors.voe import VoeExtractor
 from mediaflow_proxy.extractors.turbovidplay import TurboVidPlayExtractor
 from mediaflow_proxy.extractors.streamwish import StreamWishExtractor
+from mediaflow_proxy.extractors.vk import VKExtractor
 
 
 class ExtractorFactory:
@@ -48,6 +49,7 @@ class ExtractorFactory:
         "Vidoza": VidozaExtractor,
         "Fastream": FastreamExtractor,
         "Voe": VoeExtractor,
+        "VK": VKExtractor,
         "TurboVidPlay": TurboVidPlayExtractor,
         "StreamWish": StreamWishExtractor,
         "Sportsonline": SportsonlineExtractor,
